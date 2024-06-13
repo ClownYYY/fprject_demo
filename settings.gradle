@@ -18,6 +18,6 @@ dependencyResolutionManagement {
         maven { url "https://dl.bintray.com/kodein-framework/Kodein-DI" }
     }
 }
-rootProject.name = "YTDLnis"
+rootProject.name = "fproject_demo"
 
 include ':common', ':app', ':library', ':ffmpeg'
