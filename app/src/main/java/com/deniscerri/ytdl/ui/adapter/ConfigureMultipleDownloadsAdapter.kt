@@ -11,21 +11,25 @@ import android.widget.FrameLayout
 import android.widget.ImageView
 import android.widget.TextView
 import androidx.core.view.isVisible
+import androidx.paging.PagingDataAdapter
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.AsyncDifferConfig
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.ListAdapter
 import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.R
-import com.deniscerri.ytdl.database.models.DownloadItem
+import com.deniscerri.ytdl.database.models.DownloadItemConfigureMultiple
+import com.deniscerri.ytdl.database.models.Format
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.loadThumbnail
 import com.deniscerri.ytdl.util.Extensions.popup
 import com.deniscerri.ytdl.util.FileUtil
+import com.deniscerri.ytdl.util.InfoUtil
 import com.google.android.material.button.MaterialButton
 import java.util.Locale
 
-class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener, activity: Activity) : ListAdapter<DownloadItem?, ConfigureMultipleDownloadsAdapter.ViewHolder>(AsyncDifferConfig.Builder(
+class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener, activity: Activity) : ListAdapter<DownloadItemConfigureMultiple?, ConfigureMultipleDownloadsAdapter.ViewHolder>(
+    AsyncDifferConfig.Builder(
     DIFF_CALLBACK
 ).build()) {
     private val onItemClickListener: OnItemClickListener
@@ -88,6 +92,10 @@ class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener
             formatNote.visibility = View.GONE
         }
 
+
+        val incognitoLabel = card.findViewById<MaterialButton>(R.id.incognitoLabel)
+        incognitoLabel.isVisible = item.incognito
+
         val codec = card.findViewById<TextView>(R.id.codec)
         val codecText =
             if (item.format.encoding != "") {
@@ -104,8 +112,30 @@ class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener
             codec.text = codecText
         }
 
+        val container = card.findViewById<TextView>(R.id.container)
+        container.isVisible = item.container.isNotBlank()
+        container.text = item.container.uppercase()
+
         val fileSize = card.findViewById<TextView>(R.id.file_size)
-        val fileSizeReadable = FileUtil.convertFileSize(item.format.filesize)
+        val fileSizeReadable = if(item.type != DownloadViewModel.Type.video){
+            FileUtil.convertFileSize(item.format.filesize)
+        }else{
+            if (item.format.filesize < 10L) {
+                FileUtil.convertFileSize(0)
+            }else{
+                val preferredAudioFormatIDs = item.videoPreferences.audioFormatIDs
+                val audioFilesize = if (item.videoPreferences.removeAudio) {
+                    0
+                }else{
+                    item.allFormats
+                        .filter { preferredAudioFormatIDs.contains(it.format_id) }
+                        .sumOf { it.filesize }
+                }
+
+                FileUtil.convertFileSize(item.format.filesize + audioFilesize)
+            }
+
+        }
         if (fileSizeReadable == "?") fileSize.visibility = View.GONE
         else {
             fileSize.text = fileSizeReadable
@@ -151,16 +181,18 @@ class ConfigureMultipleDownloadsAdapter(onItemClickListener: OnItemClickListener
     }
 
     companion object {
-        private val DIFF_CALLBACK: DiffUtil.ItemCallback<DownloadItem> = object : DiffUtil.ItemCallback<DownloadItem>() {
-            override fun areItemsTheSame(oldItem: DownloadItem, newItem: DownloadItem): Boolean {
+        private val DIFF_CALLBACK: DiffUtil.ItemCallback<DownloadItemConfigureMultiple> = object : DiffUtil.ItemCallback<DownloadItemConfigureMultiple>() {
+            override fun areItemsTheSame(oldItem: DownloadItemConfigureMultiple, newItem: DownloadItemConfigureMultiple): Boolean {
                 return oldItem.url == newItem.url
             }
 
-            override fun areContentsTheSame(oldItem: DownloadItem, newItem: DownloadItem): Boolean {
+            override fun areContentsTheSame(oldItem: DownloadItemConfigureMultiple, newItem: DownloadItemConfigureMultiple): Boolean {
                 return oldItem.title == newItem.title &&
-                    oldItem.author == newItem.author &&
                     oldItem.type == newItem.type &&
-                    oldItem.format == newItem.format
+                    oldItem.container == newItem.container &&
+                    oldItem.videoPreferences == newItem.videoPreferences &&
+                    oldItem.format == newItem.format &&
+                    oldItem.incognito == newItem.incognito
             }
         }
     }

@@ -17,6 +17,8 @@ import android.graphics.drawable.shapes.OvalShape
 import android.media.MediaMetadataRetriever
 import android.media.MediaMetadataRetriever.METADATA_KEY_DURATION
 import android.net.Uri
+import android.text.Html
+import android.text.Spanned
 import android.util.DisplayMetrics
 import android.util.TypedValue
 import android.view.MotionEvent
@@ -26,10 +28,12 @@ import android.view.ViewOutlineProvider
 import android.view.animation.Interpolator
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.ScrollView
 import android.widget.TextView
 import androidx.annotation.Px
 import androidx.core.content.ContextCompat
 import androidx.core.graphics.drawable.DrawableCompat
+import androidx.core.text.HtmlCompat
 import androidx.core.view.updateLayoutParams
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.withStarted
@@ -37,6 +41,7 @@ import androidx.recyclerview.widget.RecyclerView
 import com.deniscerri.ytdl.App
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.models.DownloadItem
+import com.deniscerri.ytdl.database.models.Format
 import com.deniscerri.ytdl.database.models.observeSources.ObserveSourcesItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
 import com.deniscerri.ytdl.database.repository.ObserveSourcesRepository.EveryCategory
@@ -135,6 +140,15 @@ object Extensions {
             .build()
     }
 
+    fun ScrollView.enableFastScroll() {
+        val drawable = ShapeDrawable(OvalShape())
+        drawable.paint.color = context.getColor(android.R.color.transparent)
+
+        FastScrollerBuilder(this)
+            .useMd2Style()
+            .setTrackDrawable(drawable)
+            .build()
+    }
     fun File.getMediaDuration(context: Context): Int {
         return kotlin.runCatching {
             if (!exists()) return 0
@@ -247,20 +261,20 @@ object Extensions {
         }
     }
 
-    fun String.appendLineToLog(line: String): String {
-        val lines = this.split("\n")
-        if (!lines.takeLast(3).contains(line)){
-            //clean dublicate progress + add newline
-            var newLine = line
-            if (newLine.contains("[download")) {
-                newLine = "[download]" + line.split("[download]").last()
-            }
-
-            return lines.dropLastWhile { it.contains("[download") }.joinToString("\n") + "\n${newLine}"
-        }
-
-        return this
-    }
+//    fun String.appendLineToLog(line: String): String {
+//        val lines = this.split("\n")
+//        if (!lines.takeLast(3).contains(line)){
+//            //clean dublicate progress + add newline
+//            var newLine = line
+//            if (newLine.contains("[download")) {
+//                newLine = "[download]" + line.split("[download]").last()
+//            }
+//
+//            return lines.dropLastWhile { it.contains("[download") }.joinToString("\n") + "\n${newLine}"
+//        }
+//
+//        return this
+//    }
 
     fun ImageView.loadThumbnail(hideThumb: Boolean, imageURL: String){
         if(!hideThumb){
@@ -466,6 +480,15 @@ object Extensions {
     fun DownloadItem.setAsScheduling(timeInMillis: Long) {
         status = DownloadRepository.Status.Scheduled.toString()
         downloadStartTime = timeInMillis
+    }
+
+    fun TextWithSubtitle(title: String, subtitle: String) : Spanned {
+        return HtmlCompat.fromHtml("<b><big>" + title + "</big></b>" +  "<br />" +
+                "<small>" + subtitle + "</small>" + "<br />", HtmlCompat.FROM_HTML_MODE_LEGACY)
+    }
+
+    fun String.isYoutubeURL() : Boolean {
+        return Pattern.compile("((^(https?)://)?(www.)?(m.)?youtu(.be)?)|(^(https?)://(www.)?piped.video)").matcher(this).find()
     }
 
 }

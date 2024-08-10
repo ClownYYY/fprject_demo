@@ -12,9 +12,9 @@
     <string name="directories">Папки</string>
     <string name="home">Головна</string>
     <string name="download_all">Завантажити все</string>
-    <string name="settings">Параметри</string>
-    <string name="music_directory">Папка \"Музика\"</string>
-    <string name="video_directory">Папка \"Відео\"</string>
+    <string name="settings">Налаштування</string>
+    <string name="music_directory">Папка Музика</string>
+    <string name="video_directory">Папка Відео</string>
     <string name="search_hint">Пошук або вставка URL-адреси</string>
     <string name="updating">Оновлення</string>
     <string name="ytdl_already_updating">Встановлення нової версії</string>
@@ -398,4 +398,22 @@
     <string name="download_archive_folder">Завантажити папку архіву</string>
     <string name="location">Розташування</string>
     <string name="enable_alarm_permission">Вам потрібно включити роздільну здатність SCHEDULE_EXACT_ALARM в установках програми.</string>
+    <string name="navigation_bar">Панель навігації</string>
+    <string name="restore_info">Натисніть «Відновити», щоб об\'єднати збережені дані з поточними.
+\nНатисніть «Скинути» , щоб стерти та використовувати лише збережені дані у файлі.</string>
+    <string name="label_visibility">Видимість мітки</string>
+    <string name="always">Завжди</string>
+    <string name="sync_with_source">Синхронізуватися з джерелом</string>
+    <string name="queue">Черга</string>
+    <string name="reset">Скинути</string>
+    <string name="use_alarm_manager">Використовуйте AlarmManager замість WorkManager для планування</string>
+    <string name="use_alarm_manager_summary">Увімкніть це, якщо WorkManager обмежено постачальником вашого пристрою або заплановані завдання не надто точні</string>
+    <string name="use_item_url_not_playlist">Використовуйте URL елемента замість URL списку відтворення</string>
+    <string name="use_item_url_not_playlist_summary">Корисно для списків відтворення Libretube без мережі, які не розпізнаються yt-dlp. Метадані списку відтворення не буде вбудовано, якщо увімкнено цей параметр</string>
+    <string name="recode_video">Перекодувати відео</string>
+    <string name="recode_video_summary">Перекодує відеофайл у вказаний відеоформат</string>
+    <string name="daily">Щоденно</string>
+    <string name="weekly">Щотижня</string>
+    <string name="cleanup_leftover_downloads">Очистити залишки завантажень (скасовані, помилкові)</string>
+    <string name="monthly">Щомісяця</string>
 </resources>

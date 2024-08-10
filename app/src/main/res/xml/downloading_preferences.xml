@@ -7,7 +7,7 @@
         <SwitchPreferenceCompat
             android:widgetLayout="@layout/preferece_material_switch"
             app:defaultValue="false"
-            android:icon="@drawable/ic_incognito"
+            android:icon="@drawable/ic_nightly"
             android:key="incognito"
             app:summary="@string/incognito_summary"
             app:title="@string/incognito" />
@@ -145,6 +145,15 @@
             app:summary="@string/log_downloads_summary"
             app:title="@string/log_downloads" />
 
+        <ListPreference
+            android:defaultValue=""
+            android:entries="@array/cleanup_leftover_downloads"
+            android:entryValues="@array/cleanup_leftover_downloads_values"
+            android:icon="@drawable/ic_folder_delete"
+            app:key="cleanup_leftover_downloads"
+            app:useSimpleSummaryProvider="true"
+            app:title="@string/cleanup_leftover_downloads" />
+
         <EditTextPreference
             app:key="retries"
             android:icon="@drawable/ic_retries"
@@ -161,6 +170,15 @@
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/scheduling">
+        <SwitchPreferenceCompat
+            android:widgetLayout="@layout/preferece_material_switch"
+            app:defaultValue="false"
+            android:icon="@drawable/baseline_access_alarm_24"
+            android:key="use_alarm_for_scheduling"
+            android:summary="@string/use_alarm_manager_summary"
+            app:title="@string/use_alarm_manager" />
+
+
         <SwitchPreferenceCompat
             android:widgetLayout="@layout/preferece_material_switch"
             app:defaultValue="false"

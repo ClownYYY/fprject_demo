@@ -75,7 +75,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:autoLink="all"
-                    android:text="@string/update_formats"
+                    android:text="@string/update"
+                    android:contentDescription="@string/update_formats"
                     android:layout_marginStart="10dp"
                     app:icon="@drawable/ic_refresh"
                     app:layout_constraintBottom_toBottomOf="parent"
@@ -197,6 +198,8 @@
             </LinearLayout>
 
         </com.facebook.shimmer.ShimmerFrameLayout>
+
+
 
     </LinearLayout>
 

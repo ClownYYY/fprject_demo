@@ -4,6 +4,8 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.content.SharedPreferences
 import android.content.res.Resources
+import android.content.res.Resources.NotFoundException
+import android.os.Handler
 import android.os.Looper
 import android.text.Html
 import android.util.Log
@@ -20,13 +22,17 @@ import com.deniscerri.ytdl.database.models.ResultItem
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.getIntByAny
 import com.deniscerri.ytdl.util.Extensions.getStringByAny
+import com.deniscerri.ytdl.util.Extensions.isYoutubeURL
 import com.deniscerri.ytdl.util.Extensions.toStringDuration
-import com.deniscerri.ytdl.work.TerminalDownloadWorker
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.yausername.youtubedl_android.YoutubeDL
+import com.yausername.youtubedl_android.YoutubeDLException
 import com.yausername.youtubedl_android.YoutubeDLRequest
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -42,9 +48,11 @@ import java.util.regex.Pattern
 
 class InfoUtil(private val context: Context) {
     private lateinit var sharedPreferences: SharedPreferences
+    private lateinit var handler: Handler
 
     init {
         try {
+            handler = Handler(Looper.getMainLooper())
             sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
             countryCODE = sharedPreferences.getString("locale", "")!!
             if (countryCODE.isEmpty()) countryCODE = "US"
@@ -106,23 +114,37 @@ class InfoUtil(private val context: Context) {
 
     @Throws(JSONException::class)
     fun getPlaylist(id: String, nextPageToken: String, playlistName: String): PlaylistTuple {
-        try{
+        try {
             val items = arrayListOf<ResultItem>()
             // -------------- PIPED API FUNCTION -------------------
             var url = ""
             url = if (nextPageToken.isBlank()) "$pipedURL/playlists/$id"
-            else """$pipedURL/nextpage/playlists/$id?nextpage=${nextPageToken.replace("&prettyPrint", "%26prettyPrint")}"""
+            else """$pipedURL/nextpage/playlists/$id?nextpage=${
+                nextPageToken.replace(
+                    "&prettyPrint",
+                    "%26prettyPrint"
+                )
+            }"""
+
+            println(url)
 
             val res = genericRequest(url)
             if (!res.has("relatedStreams")) throw Exception()
 
             val dataArray = res.getJSONArray("relatedStreams")
             var nextpage = res.getString("nextpage")
-            for (i in 0 until dataArray.length()){
+            val isMixPlaylist = nextPageToken.isBlank() && res.getInt("videos") < 0
+            if (isMixPlaylist) throw YoutubeDLException("This playlist type is unviewable.")
+
+            for (i in 0 until dataArray.length()) {
                 kotlin.runCatching {
                     val obj = dataArray.getJSONObject(i)
-                    createVideoFromPipedJSON(obj, "https://youtube.com" + obj.getString("url"))?.apply {
-                        playlistTitle = runCatching { res.getString("name") }.getOrElse { playlistName }
+                    createVideoFromPipedJSON(
+                        obj,
+                        "https://youtube.com" + obj.getString("url")
+                    )?.apply {
+                        playlistTitle =
+                            runCatching { res.getString("name") }.getOrElse { playlistName }
                         playlistURL = "https://www.youtube.com/playlist?list=$id"
                         items.add(this)
                     }
@@ -131,10 +153,14 @@ class InfoUtil(private val context: Context) {
             if (nextpage == "null") nextpage = ""
             return PlaylistTuple(nextpage, items)
         }catch (e: Exception){
-            return PlaylistTuple(
-                "",
-                getFromYTDL("https://www.youtube.com/playlist?list=$id")
-            )
+            if (e is YoutubeDLException) {
+                throw(e)
+            }else{
+                return PlaylistTuple(
+                    "",
+                    getFromYTDL("https://www.youtube.com/playlist?list=$id")
+                )
+            }
         }
     }
 
@@ -186,7 +212,7 @@ class InfoUtil(private val context: Context) {
         }
         return video
     }
-    private fun createVideoFromPipedJSON(obj: JSONObject, url: String): ResultItem? {
+    private fun createVideoFromPipedJSON(obj: JSONObject, url: String, ignoreFormatPreference : Boolean = false): ResultItem? {
         var video: ResultItem? = null
         try {
             val id = getIDFromYoutubeURL(url)
@@ -195,13 +221,13 @@ class InfoUtil(private val context: Context) {
                  Html.fromHtml(obj.getString("uploader").toString()).toString()
             }catch (e: Exception){
                 Html.fromHtml(obj.getString("uploaderName").toString()).toString()
-            }
+            }.removeSuffix(" - Topic")
 
             val duration = obj.getInt("duration").toStringDuration(Locale.US)
             val thumb = "https://i.ytimg.com/vi/$id/hqdefault.jpg"
             val formats : ArrayList<Format> = ArrayList()
 
-            if(sharedPreferences.getString("formats_source", "yt-dlp") == "piped"){
+            if(sharedPreferences.getString("formats_source", "yt-dlp") == "piped" || ignoreFormatPreference){
                 if (obj.has("audioStreams")){
                     val formatsInJSON = obj.getJSONArray("audioStreams")
                     for (f in 0 until formatsInJSON.length()){
@@ -439,19 +465,25 @@ class InfoUtil(private val context: Context) {
         return query!!
     }
 
-    fun getFormats(url: String) : List<Format> {
-        
-        val p = Pattern.compile("^(https?)://(www.)?youtu(.be)?")
-        val m = p.matcher(url)
-        val formatSource = sharedPreferences.getString("formats_source", "yt-dlp")
-        if (m.find() && formatSource == "piped"){
-            return try {
+    fun getFormats(url: String, source : String? = null) : List<Format> {
+        val formatSource = source ?: sharedPreferences.getString("formats_source", "yt-dlp")
+        if (url.isYoutubeURL() && formatSource == "piped"){
+            try {
                 val id = getIDFromYoutubeURL(url)
                 val res = genericRequest("$pipedURL/streams/$id")
-                if (res.length() == 0) getFromYTDL(url)[0]
-                val item = createVideoFromPipedJSON(res, "https://youtube.com/watch?v=$id")
-                item!!.formats
+                if (res.length() == 0) {
+                    return if (source != null) {
+                        listOf()
+                    }else {
+                        getFormatsFromYTDL(url)
+                    }
+                }else {
+                    val item = createVideoFromPipedJSON(res, "https://youtube.com/watch?v=$id", true)
+                    return item!!.formats
+                }
+
             }catch(e: Exception) {
+                println(e)
                 if (e is CancellationException) throw e
                 return getFormatsFromYTDL(url)
             }
@@ -494,32 +526,53 @@ class InfoUtil(private val context: Context) {
 
         val res = YoutubeDL.getInstance().execute(request)
         val results: Array<String?> = try {
-            val lineSeparator = System.getProperty("line.separator")
-            res.out.split(lineSeparator!!).toTypedArray()
+            res.out.split(System.lineSeparator()).toTypedArray()
         } catch (e: Exception) {
             arrayOf(res.out)
         }
         val json = results[0]
-        val jsonArray = JSONArray(json)
+        val jsonArray = kotlin.runCatching { JSONArray(json) }.getOrElse { JSONArray() }
 
         return parseYTDLFormats(jsonArray)
     }
 
-    fun getFormatsMultiple(urls: List<String>, progress: (progress: List<Format>) -> Unit){
-        val urlsFile = File(context.cacheDir, "urls.txt")
-        urlsFile.delete()
-        urlsFile.createNewFile()
-        urls.forEach {
-            urlsFile.appendText(it+"\n")
-        }
+    data class MultipleFormatProgress(
+        val url: String,
+        val formats: List<Format>,
+        val unavailable : Boolean = false,
+        val unavailableMessage: String = ""
+    )
 
-        val formatSource = sharedPreferences.getString("formats_source", "yt-dlp")
-        val p = Pattern.compile("^(https?)://(www.)?youtu(.be)?")
-        val allYoutubeLinks = urls.any {p.matcher(it).find() }
-        if (formatSource == "yt-dlp" || !allYoutubeLinks){
+    suspend fun getFormatsMultiple(urls: List<String>, source: String? = null, progress: (progress: MultipleFormatProgress) -> Unit) : MutableList<MutableList<Format>> {
+        val formatCollection = mutableListOf<MutableList<Format>>()
+
+        val formatSource = source ?: sharedPreferences.getString("formats_source", "yt-dlp")
+        val allYoutubeLinks = urls.all { it.isYoutubeURL() }
+        if (allYoutubeLinks && formatSource == "piped") {
+            urls.forEach { url ->
+                val id = getIDFromYoutubeURL(url)
+                val res = genericRequest("$pipedURL/streams/$id")
+                createVideoFromPipedJSON(res, url).apply {
+                    formatCollection.add(this!!.formats)
+                    progress(
+                        MultipleFormatProgress(url, this.formats)
+                    )
+                }
+            }
+        }
+        else {
+            val urlsFile = File(context.cacheDir, "urls.txt")
+            urlsFile.delete()
+            withContext(Dispatchers.IO) {
+                urlsFile.createNewFile()
+            }
+            urls.forEach {
+                urlsFile.appendText(it+"\n")
+            }
+
             try {
                 val request = YoutubeDLRequest(emptyList())
-                request.addOption("--print", "%(formats)s")
+                request.addOption("--print", "formats")
                 request.addOption("-a", urlsFile.absolutePath)
                 request.addOption("--skip-download")
                 request.addOption("-R", "1")
@@ -528,7 +581,6 @@ class InfoUtil(private val context: Context) {
                 if (sharedPreferences.getBoolean("force_ipv4", false)){
                     request.addOption("-4")
                 }
-
 
                 if (sharedPreferences.getBoolean("use_cookies", false)){
                     FileUtil.getCookieFile(context){
@@ -549,35 +601,59 @@ class InfoUtil(private val context: Context) {
                 }
                 request.addOption("-P", FileUtil.getCachePath(context) + "/tmp")
 
+                val txt = parseYTDLRequestString(request)
+                println(txt)
 
+                var urlIdx = 0
                 YoutubeDL.getInstance().execute(request){ progress, _, line ->
                     try{
                         if (line.isNotBlank()){
-                            val listOfStrings = JSONArray(line)
-                            progress(parseYTDLFormats(listOfStrings))
+                            val url = urls[urlIdx]
+                            println(line)
+                            println(url)
+
+                            if (line.contains("unavailable")) {
+                                progress(MultipleFormatProgress(url, listOf(), true, line))
+                            }else{
+                                val formatsJSON = JSONArray(line)
+                                val formats = parseYTDLFormats(formatsJSON)
+
+                                formatCollection.add(formats)
+                                progress(MultipleFormatProgress(url, formats))
+                            }
                         }
 
                     }catch (e: Exception){
-                        progress(emptyList())
+                        Log.e("GET MULTIPLE FORMATS", e.toString())
                     }
+                    urlIdx++
                 }
             } catch (e: Exception) {
-                Looper.prepare().run {
+                e.message?.split(System.lineSeparator())?.apply {
+                    this.forEach { line ->
+                        println(line)
+                        if (line.contains("unavailable")) {
+                            kotlin.runCatching {
+                                val id = Regex("""\[.*?\] (\w+):""").find(line)!!.groupValues[1]
+                                val url = urls.first { it.contains(id) }
+                                progress(MultipleFormatProgress(url, listOf(), true, line))
+                                delay(500)
+                            }
+                        }
+
+                    }
+                }
+
+                handler.post {
                     Toast.makeText(context, e.message, Toast.LENGTH_LONG).show()
                 }
                 e.printStackTrace()
             }
-        }else{
-            urls.forEach {
-                val id = getIDFromYoutubeURL(it)
-                val res = genericRequest("$pipedURL/streams/$id")
-                createVideoFromPipedJSON(res, it)?.apply {
-                    progress(this.formats)
-                }
-            }
+
+            urlsFile.delete()
         }
 
-        urlsFile.delete()
+        return formatCollection
     }
 
     @SuppressLint("RestrictedApi")
@@ -601,8 +677,12 @@ class InfoUtil(private val context: Context) {
             }
         }
         val lang = sharedPreferences.getString("app_language", "en")
-        if (searchEngine == "ytsearch" && context.getStringArray(R.array.subtitle_langs).contains(lang)){
-            request.addOption("--extractor-args", "youtube:lang=$lang")
+        if (searchEngine == "ytsearch" || query.isYoutubeURL()) {
+            var extractorArgs = "player_client=default,mediaconnect,android"
+            if (context.getStringArray(R.array.subtitle_langs).contains(lang)) {
+                extractorArgs += ";lang=$lang"
+            }
+            request.addOption("--extractor-args", "youtube:$extractorArgs")
         }
 
         request.addOption("--flat-playlist")
@@ -648,10 +728,10 @@ class InfoUtil(private val context: Context) {
         for (result in results) {
             if (result.isNullOrBlank()) continue
             val jsonObject = JSONObject(result)
-            var title = jsonObject.getStringByAny("alt_title", "title", "webpage_url_basename")
+            val title = jsonObject.getStringByAny("alt_title", "title", "webpage_url_basename")
             if (title == "[Private video]" || title == "[Deleted video]") continue
 
-            var author = jsonObject.getStringByAny("uploader", "channel", "playlist_uploader", "uploader_id")
+            var author = jsonObject.getStringByAny("artist", "uploader", "channel", "playlist_uploader", "uploader_id")
             var duration = jsonObject.getIntByAny("duration").toString()
             if (duration != "-1"){
                 duration = jsonObject.getInt("duration").toStringDuration(Locale.US)
@@ -678,7 +758,7 @@ class InfoUtil(private val context: Context) {
                 }
             }
 
-            var website = jsonObject.getStringByAny("ie_key", "extractor_key", "extractor")
+            var website = jsonObject.getStringByAny("extractor_key", "extractor","ie_key")
             if (website == "Generic" || website == "HTML5MediaEmbed") website = jsonObject.getStringByAny("webpage_url_domain")
             var playlistTitle = jsonObject.getStringByAny("playlist_title")
             var playlistURL: String? = ""
@@ -728,8 +808,6 @@ class InfoUtil(private val context: Context) {
             val type = jsonObject.getStringByAny("_type")
             if (type == "playlist" && playlistTitle.isEmpty()) {
                 playlistTitle = title
-                title = ""
-                author = ""
             }
 
             val res = ResultItem(0,
@@ -758,32 +836,33 @@ class InfoUtil(private val context: Context) {
         if (formatsInJSON != null) {
             for (f in formatsInJSON.length() - 1 downTo 0){
                 val format = formatsInJSON.getJSONObject(f)
-                if (format.has("filesize")){
-                    if (format.get("filesize") == "None"){
+                kotlin.runCatching {
+                    if (format.get("filesize").toString() == "None") {
                         format.remove("filesize")
-                        if (format.has("filesize_approx") && format.get("filesize_approx") != "None"){
-                            format.put("filesize", format.getInt("filesize_approx"))
-                        }else{
-                            format.put("filesize", 0)
-                        }
                     }
-                    try{
-                        val size = format.get("filesize").toString().toFloat()
-                        format.remove("filesize")
-                        format.put("filesize", size)
-                    }catch (ignored: Exception){}
                 }
 
-                if (format.has("filesize_approx")){
-                    if (format.get("filesize_approx") == "None"){
+                kotlin.runCatching {
+                    if (format.get("filesize_approx").toString() == "None") {
                         format.remove("filesize_approx")
-                        format.put("filesize_approx", 0)
+                    }
+                }
+
+                kotlin.runCatching {
+                    if (!format.has("filesize")) {
+                        format.put("filesize", 0)
+                    }
+                }
+
+                kotlin.runCatching {
+                    if(format.get("format_note").toString() == "null"){
+                        format.remove("format_note")
                     }
                 }
 
                 val formatProper = Gson().fromJson(format.toString(), Format::class.java)
-
                 if (formatProper.format_note == null) continue
+
                 if (format.has("format_note")){
                     if (!formatProper!!.format_note.contains("audio only", true)) {
                         formatProper.format_note = format.getString("format_note")
@@ -873,13 +952,22 @@ class InfoUtil(private val context: Context) {
 
 
 
-    fun getStreamingUrlAndChapters(url: String) : MutableList<String?> {
+    fun getStreamingUrlAndChapters(url: String) : Pair<List<String>, List<ChapterItem>?> {
         try {
-            val p = Pattern.compile("(^(https?)://(www.)?(music.)?youtu(.be)?)|(^(https?)://(www.)?piped.video)")
-            val m = p.matcher(url)
+            if (url.isYoutubeURL()) {
+                val id = getIDFromYoutubeURL(url)
+                val res = genericRequest("$pipedURL/streams/$id")
+                if (res.length() == 0) {
+                    throw Exception()
+                }else{
+                    val item = createVideoFromPipedJSON(res, url)
+                    if (item!!.urls.isBlank()) throw Exception()
 
-            if (m.find()){
-                return getStreamingUrlAndChaptersFromPIPED(url)
+                    val urls = item.urls.split(",")
+                    val chapters = item.chapters
+                    return Pair(urls, chapters)
+                }
+
             }else{
                 throw Exception()
             }
@@ -887,7 +975,7 @@ class InfoUtil(private val context: Context) {
             try {
                 val request = YoutubeDLRequest(url)
                 request.addOption("--get-url")
-                request.addOption("--print", "%(chapters)s")
+                request.addOption("--print", "%(.{urls,chapters})s")
                 request.addOption("--skip-download")
                 request.addOption("-R", "1")
                 request.addOption("--socket-timeout", "5")
@@ -908,8 +996,6 @@ class InfoUtil(private val context: Context) {
                     }
                 }
 
-
-
                 val proxy = sharedPreferences.getString("proxy", "")
                 if (proxy!!.isNotBlank()){
                     request.addOption("--proxy", proxy)
@@ -919,36 +1005,41 @@ class InfoUtil(private val context: Context) {
 
 
                 val youtubeDLResponse = YoutubeDL.getInstance().execute(request)
-                val results: Array<String?> = try {
-                    val lineSeparator = System.getProperty("line.separator")
-                    youtubeDLResponse.out.split(lineSeparator!!).toTypedArray()
-                } catch (e: Exception) {
-                    arrayOf(youtubeDLResponse.out)
+                val json = JSONObject(youtubeDLResponse.out)
+                val urls = if (json.has("urls")) {
+                    json.getString("urls").split("\n")
+                }else{
+                    listOf()
                 }
-                return results.filter { it!!.isNotEmpty() }.toMutableList()
+
+                val chapters = if (json.has("chapters")) {
+                    val arr = json.getJSONArray("chapters")
+                    val list = mutableListOf<ChapterItem>()
+                    for (i in 0 until arr.length()) {
+                        list.add(
+                            Gson().fromJson(arr.getJSONObject(i).toString(), ChapterItem::class.java)
+                        )
+                    }
+
+                    list
+                }else{
+                    listOf()
+                }
+
+                return Pair(urls, chapters)
+
             } catch (e: Exception) {
-                return mutableListOf()
+                return Pair(listOf(), listOf())
             }
         }
     }
 
-    private fun getStreamingUrlAndChaptersFromPIPED(url: String) : MutableList<String?> {
-        val id = getIDFromYoutubeURL(url)
-        val res = genericRequest("$pipedURL/streams/$id")
-        if (res.length() == 0) {
-            throw Exception()
-        }else{
-            val item = createVideoFromPipedJSON(res, url)
-            if (item!!.urls.isBlank()) throw Exception()
-            val list = mutableListOf<String?>(Gson().toJson(item.chapters))
-            list.addAll(item.urls.split(","))
-            return list
-        }
-    }
 
     @SuppressLint("RestrictedApi")
-    fun buildYoutubeDLRequest(downloadItem: DownloadItem) : YoutubeDLRequest{
-        val request = if (downloadItem.playlistURL.isNullOrBlank() || downloadItem.playlistTitle.isBlank()){
+    fun buildYoutubeDLRequest(downloadItem: DownloadItem) : YoutubeDLRequest {
+        val useItemURL = sharedPreferences.getBoolean("use_itemurl_instead_playlisturl", false)
+
+        val request = if (downloadItem.playlistURL.isNullOrBlank() || downloadItem.playlistTitle.isBlank() || useItemURL){
             YoutubeDLRequest(downloadItem.url)
         }else{
             YoutubeDLRequest(downloadItem.playlistURL!!).apply {
@@ -961,10 +1052,15 @@ class InfoUtil(private val context: Context) {
             }
         }
 
+        if (downloadItem.playlistIndex != null && useItemURL) {
+            request.addOption("--parse-metadata", " ${downloadItem.playlistIndex}: %(playlist_index)s")
+        }
+
         val type = downloadItem.type
 
         val downDir : File
-        if (!sharedPreferences.getBoolean("cache_downloads", true) && File(FileUtil.formatPath(downloadItem.downloadPath)).canWrite()){
+        val canWrite = File(FileUtil.formatPath(downloadItem.downloadPath)).canWrite() || sharedPreferences.getBoolean("access_all_files", false)
+        if (!sharedPreferences.getBoolean("cache_downloads", true) && canWrite){
             downDir = File(FileUtil.formatPath(downloadItem.downloadPath))
             request.addOption("--no-quiet")
             request.addOption("--no-simulate")
@@ -1066,7 +1162,7 @@ class InfoUtil(private val context: Context) {
             }
 
             if(downloadItem.title.isNotBlank()){
-                request.addCommands(listOf("--replace-in-metadata", "video:title", ".+", downloadItem.title.take(120)))
+                request.addCommands(listOf("--replace-in-metadata", "video:title", ".+", downloadItem.title.take(180)))
             }
 
 
@@ -1092,7 +1188,7 @@ class InfoUtil(private val context: Context) {
                 filenameTemplate = if (filenameTemplate.isBlank()){
                     "%(section_title&{} |)s%(title).170B"
                 }else{
-                    "%(section_title&{} |)s$filenameTemplate"
+                    "%(section_title&{} |)s $filenameTemplate"
                 }
                 if (downloadItem.downloadSections.split(";").size > 1){
                     filenameTemplate = "%(autonumber)d. $filenameTemplate [%(section_start>%H∶%M∶%S)s]"
@@ -1105,6 +1201,15 @@ class InfoUtil(private val context: Context) {
 
             if (sharedPreferences.getBoolean("write_description", false)){
                 request.addOption("--write-description")
+            }
+
+            if (downloadItem.url.isYoutubeURL()) {
+                var extractorArgs = "player_client=default,mediaconnect,android"
+                val lang = sharedPreferences.getString("app_language", "en")
+                if (context.getStringArray(R.array.subtitle_langs).contains(lang)) {
+                    extractorArgs += ";lang=$lang"
+                }
+                request.addOption("--extractor-args", "youtube:$extractorArgs")
             }
         }
 
@@ -1119,6 +1224,7 @@ class InfoUtil(private val context: Context) {
         when(type){
             DownloadViewModel.Type.audio -> {
                 val supportedContainers = context.resources.getStringArray(R.array.audio_containers)
+                var abrSort = ""
 
                 var audioQualityId : String = downloadItem.format.format_id
                 if (audioQualityId.isBlank() || listOf("0", context.getString(R.string.best_quality), "ba", "best", "").contains(audioQualityId)){
@@ -1126,24 +1232,29 @@ class InfoUtil(private val context: Context) {
                 }else if (listOf(context.getString(R.string.worst_quality), "wa", "worst").contains(audioQualityId)){
                     audioQualityId = "wa/w"
                 }else if(audioQualityId.contains("kbps_ytdlnisgeneric")){
-                    request.addOption("--match-filter", "abr<=${audioQualityId.split("kbps")[0]}")
+
+                    abrSort = audioQualityId.split("kbps")[0]
                     audioQualityId = ""
+                }else{
+                    audioQualityId += "/ba/b"
                 }
 
 
                 val ext = downloadItem.container
+                val preferredLanguage = sharedPreferences.getString("audio_language","")!!
+                println(audioQualityId)
                 if (audioQualityId.isNotBlank()) {
-                    if(audioQualityId.contains("-")){
+                    if (audioQualityId.matches(".*-[0-9]+.*".toRegex())) {
                         audioQualityId = if(!downloadItem.format.lang.isNullOrBlank() && downloadItem.format.lang != "None"){
                             "ba[format_id~='^(${audioQualityId.split("-")[0]})'][language^=${downloadItem.format.lang}]/ba/b"
                         }else{
                             "$audioQualityId/${audioQualityId.split("-")[0]}"
                         }
                     }
+
                     request.addOption("-f", audioQualityId)
                 }else{
                     //enters here if generic or quick downloaded with ba format
-                    val preferredLanguage = sharedPreferences.getString("audio_language","")!!
                     if (preferredLanguage.isNotBlank()){
                         request.addOption("-f", "ba[language^=$preferredLanguage]/ba/b")
                     }
@@ -1156,11 +1267,19 @@ class InfoUtil(private val context: Context) {
                     formatSorting.append(",acodec:$aCodecPref")
                 }
 
+                if (abrSort.isNotBlank()){
+                    formatSorting.append(",abr:${abrSort}")
+                }
+
                 if(ext.isNotBlank()){
                     if(!ext.matches("(webm)|(Default)|(${context.getString(R.string.defaultValue)})".toRegex()) && supportedContainers.contains(ext)){
                         request.addOption("--audio-format", ext)
                         formatSorting.append(",aext:$ext")
                     }
+                }
+
+                if (preferredLanguage.isNotBlank()) {
+                    formatSorting.append(",lang:${preferredLanguage}")
                 }
 
                 request.addOption("-P", downDir.absolutePath)
@@ -1173,15 +1292,15 @@ class InfoUtil(private val context: Context) {
 
                     if (embedMetadata){
                         request.addOption("--embed-metadata")
-                        request.addOption("--parse-metadata", "%(artist,uploader)s:^(?P<meta_album_artist>[^,]*)")
+                        request.addOption("--parse-metadata", "%(artist,uploader|)s:^(?P<meta_album_artist>[^,]*)")
                         request.addOption("--parse-metadata", "%(album_artist,meta_album_artist|)s:%(album_artist)s")
 
                         request.addOption("--parse-metadata", "description:(?:Released on: )(?P<dscrptn_year>\\d{4})")
-                        request.addOption("--parse-metadata", "%(dscrptn_year,release_year,release_date>%Y,upload_date>%Y)s:%(meta_date)s")
+                        request.addOption("--parse-metadata", "%(dscrptn_year,release_year,release_date>%Y,upload_date>%Y)s:(?P<meta_date>\\d+)")
 
                         if (downloadItem.playlistTitle.isNotEmpty()) {
                             request.addOption("--parse-metadata", "%(album,title)s:%(meta_album)s")
-                            request.addOption("--parse-metadata", "%(track_number,playlist_index)d:%(track_number)s")
+                            request.addOption("--parse-metadata", "%(track_number,playlist_index)d:(?P<track_number>\\d+)")
                         } else {
                             request.addOption("--parse-metadata", "%(album,title)s:%(meta_album)s")
                         }
@@ -1239,8 +1358,14 @@ class InfoUtil(private val context: Context) {
                     supportedContainers.contains(outputContainer)
                 ){
                     cont = outputContainer
-                    request.addOption("--merge-output-format", outputContainer.lowercase())
-                    if (outputContainer != "webm") {
+
+                    if (downloadItem.videoPreferences.recodeVideo) {
+                        request.addOption("--recode-video", outputContainer.lowercase())
+                    }else{
+                        request.addOption("--merge-output-format", outputContainer.lowercase())
+                    }
+
+                    if (!listOf("webm", "avi", "flv").contains(outputContainer.lowercase())) {
                         val embedThumb = sharedPreferences.getBoolean("embed_thumbnail", false)
                         if (embedThumb) {
                             request.addOption("--embed-thumbnail")
@@ -1257,7 +1382,8 @@ class InfoUtil(private val context: Context) {
                 var audioF = downloadItem.videoPreferences.audioFormatIDs.map { f ->
                     val format = downloadItem.allFormats.find { it.format_id == f }
                     format?.run {
-                        if (this.format_id.contains("-")) {
+                        println(format_id)
+                        if (this.format_id.matches(".*-[0-9]+".toRegex())) {
                             if (!this.lang.isNullOrBlank() && this.lang != "None") {
                                 "ba[format_id~='^(${this.format_id.split("-")[0]})'][language^=${this.lang}]"
                             } else {
@@ -1270,8 +1396,9 @@ class InfoUtil(private val context: Context) {
                 val preferredAudioLanguage = sharedPreferences.getString("audio_language", "")!!
                 if (downloadItem.videoPreferences.removeAudio) audioF = ""
 
+                var abrSort = ""
                 if(audioF.contains("kbps_ytdlnisgeneric")){
-                    request.addOption("--match-filter", "abr<=${audioF.split("kbps")[0]}")
+                    abrSort = audioF.split("kbps")[0]
                     audioF = ""
                 }
 
@@ -1376,19 +1503,19 @@ class InfoUtil(private val context: Context) {
 
                 }
 
-                val genericFormats = getGenericVideoFormats(context.resources).map { it.format_id }
+                val preferredLanguage = sharedPreferences.getString("audio_language","")!!
 
                 StringBuilder().apply {
                     if (hasGenericResulutionFormat.isNotBlank()) {
                         append(",res:${hasGenericResulutionFormat}")
-                    }else if (genericFormats.contains(videoF) && preferredQuality!!.contains("p_")){
-                        append(",res:${preferredQuality.split("_")[0]}")
                     }
                     if (sharedPreferences.getBoolean("prefer_smaller_formats", false)) append(",+size")
                     if (vCodecPref.isNotBlank()) append(",vcodec:$vCodecPref")
                     if (aCodecPref.isNotBlank()) append(",acodec:$aCodecPref")
                     if (cont.isNotBlank()) append(",vext:$cont")
                     if (acont.isNotBlank()) append(",aext:$acont")
+                    if (abrSort.isNotBlank()) append(",abr~${abrSort}")
+                    if (preferredLanguage.isNotBlank()) append(",lang:${preferredLanguage}")
                     if (this.isNotBlank()){
                         request.addOption("-S", "+hasaud$this")
                     }
@@ -1528,7 +1655,8 @@ class InfoUtil(private val context: Context) {
 
     fun getGenericVideoFormats(resources: Resources) : MutableList<Format>{
         val formatIDPreference = sharedPreferences.getString("format_id", "").toString().split(",").filter { it.isNotEmpty() }
-        val videoFormats = resources.getStringArray(R.array.video_formats_values)
+        val videoFormatsValues = resources.getStringArray(R.array.video_formats_values)
+        val videoFormats = resources.getStringArray(R.array.video_formats)
         val formats = mutableListOf<Format>()
         val containerPreference = sharedPreferences.getString("video_format", "")
         val audioCodecPreference = sharedPreferences.getString("audio_codec", "")!!.run {
@@ -1547,7 +1675,7 @@ class InfoUtil(private val context: Context) {
                 videoCodecs[videoCodecsValues.indexOf(this)]
             }
         }
-        videoFormats.forEach { formats.add(Format(it, containerPreference!!,videoCodecPreference,audioCodecPreference, "",0, it.split("_")[0])) }
+        videoFormatsValues.forEachIndexed { index, it ->  formats.add(Format(it, containerPreference!!,videoCodecPreference,audioCodecPreference, "",0, videoFormats[index])) }
         formatIDPreference.forEach { formats.add(Format(it, containerPreference!!,resources.getString(R.string.preferred_format_id),"", "",1, it)) }
         return formats
     }
@@ -1556,7 +1684,7 @@ class InfoUtil(private val context: Context) {
 
     class PlaylistTuple internal constructor(
         var nextPageToken: String,
-        var videos: ArrayList<ResultItem>
+        var videos: ArrayList<ResultItem>,
     )
 
     companion object {

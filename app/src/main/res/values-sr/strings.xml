@@ -398,4 +398,22 @@
     <string name="download_archive_folder">Фолдер архиве преузимања</string>
     <string name="location">Локација</string>
     <string name="enable_alarm_permission">Морате да омогућите дозволу SCHEDULE_EXACT_ALARM у подешавањима апликације.</string>
+    <string name="navigation_bar">Трака за навигацију</string>
+    <string name="sync_with_source">Синхронизуј с извором</string>
+    <string name="queue">Редослед</string>
+    <string name="reset">Ресетуј</string>
+    <string name="label_visibility">Видљивост ознаке</string>
+    <string name="always">Увек</string>
+    <string name="restore_info">Притисните „Врати“ да спојите сачуване податке с вашим тренутним подацима.
+\nПритисните „Ресетуј“ да избришете и користите само сачуване податке у фајлу.</string>
+    <string name="use_alarm_manager">Користите AlarmManager уместо WorkManager за планирање</string>
+    <string name="use_alarm_manager_summary">Омогућите ово ако је WorkManager ограничен од стране продавца уређаја или заказани послови нису превише прецизни</string>
+    <string name="use_item_url_not_playlist">Користи URL адресу предмета уместо URL адресе плејлисте</string>
+    <string name="use_item_url_not_playlist_summary">Корисно за Libretube офлајн плејлисте које yt-dlp не препознаје. Метаподаци плејлисте неће бити уграђени, ако је ово омогућено</string>
+    <string name="recode_video">Рекодирај видео снимак</string>
+    <string name="recode_video_summary">Рекодира фајл видео снимка у наведени формат видео снимка</string>
+    <string name="daily">Дневно</string>
+    <string name="weekly">Недељно</string>
+    <string name="monthly">Месечно</string>
+    <string name="cleanup_leftover_downloads">Очистите преостала преузимања (отказана, с грешком)</string>
 </resources>

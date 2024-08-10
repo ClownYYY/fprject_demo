@@ -398,4 +398,22 @@
     <string name="location">स्थान</string>
     <string name="enable_alarm_permission">आपको ऐप सेटिंग में SCHEDULE_EXACT_ALARM अनुमति सक्षम करनी होगी।</string>
     <string name="process_downloads_background">"डाउनलोड अभी भी लोड हो रहे हैं. उन्हें पृष्ठभूमि में संसाधित करना जारी रखें और डाउनलोड करना प्रारंभ करें? "</string>
+    <string name="navigation_bar">नेविगेशन बार</string>
+    <string name="label_visibility">लेबल दृश्यता</string>
+    <string name="sync_with_source">स्रोत के साथ समन्वयित करें</string>
+    <string name="queue">कतार</string>
+    <string name="reset">रीसेट करें</string>
+    <string name="always">हमेशा</string>
+    <string name="restore_info">सहेजे गए डेटा को अपने वर्तमान डेटा के साथ मर्ज करने के लिए \'पुनर्स्थापित करें\' दबाएं।
+\nफाइल में सहेजे गए डेटा को मिटाने और केवल उसका उपयोग करने के लिए \'रीसेट करें\' दबाएं।</string>
+    <string name="use_alarm_manager">शेड्यूलिंग के लिए WorkManager के बजाय AlarmManager का उपयोग करें</string>
+    <string name="use_alarm_manager_summary">यदि WorkManager आपके डिवाइस विक्रेता द्वारा प्रतिबंधित है या शेड्यूल किए गए कार्य बहुत सटीक नहीं हैं तो इसे सक्षम करें</string>
+    <string name="use_item_url_not_playlist_summary">Libretube ऑफ़लाइन प्लेलिस्ट के लिए उपयोगी है जो yt-dlp द्वारा पहचाने नहीं जाते हैं। इस सक्षम के साथ प्लेलिस्ट मेटाडेटा एम्बेड नहीं किया जाएगा</string>
+    <string name="use_item_url_not_playlist">प्लेलिस्ट URL के बजाय आइटम URL का उपयोग करें</string>
+    <string name="recode_video">वीडियो पुनःकोड करें</string>
+    <string name="recode_video_summary">वीडियो फ़ाइल को निर्दिष्ट वीडियो प्रारूप में पुनःकोडित करता है</string>
+    <string name="daily">दैनिक</string>
+    <string name="weekly">साप्ताहिक</string>
+    <string name="monthly">मासिक</string>
+    <string name="cleanup_leftover_downloads">बचे हुए डाउनलोड को साफ़ करें (रद्द, त्रुटिपूर्ण)</string>
 </resources>

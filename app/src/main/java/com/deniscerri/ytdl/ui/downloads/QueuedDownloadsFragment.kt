@@ -146,7 +146,7 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                 downloadViewModel.getItemByID(id)
             }
             val deleteDialog = MaterialAlertDialogBuilder(requireContext())
-            deleteDialog.setTitle(getString(R.string.you_are_going_to_delete) + " \"" + item.title + "\"!")
+            deleteDialog.setTitle(getString(R.string.you_are_going_to_delete) + " \"" + item.title.ifEmpty { item.url } + "\"!")
             deleteDialog.setNegativeButton(getString(R.string.cancel)) { dialogInterface: DialogInterface, _: Int -> dialogInterface.cancel() }
             deleteDialog.setPositiveButton(getString(R.string.ok)) { _: DialogInterface?, _: Int ->
                 item.status = DownloadRepository.Status.Cancelled.toString()
@@ -154,7 +154,7 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                     downloadViewModel.updateDownload(item)
                 }
 
-                Snackbar.make(queuedRecyclerView, getString(R.string.cancelled) + ": " + item.title, Snackbar.LENGTH_LONG)
+                Snackbar.make(queuedRecyclerView, getString(R.string.cancelled) + ": " + item.title.ifEmpty { item.url }, Snackbar.LENGTH_LONG)
                     .setAction(getString(R.string.undo)) {
                         lifecycleScope.launch(Dispatchers.IO) {
                             downloadViewModel.deleteDownload(item.id)
@@ -211,7 +211,6 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                             adapter.clearCheckedItems()
                             for (id in selectedObjects){
                                 YoutubeDL.getInstance().destroyProcessById(id.toInt().toString())
-                                WorkManager.getInstance(requireContext()).cancelAllWorkByTag(id.toInt().toString())
                                 notificationUtil.cancelDownloadNotification(id.toInt())
                             }
                             downloadViewModel.deleteAllWithID(selectedObjects)
@@ -220,20 +219,6 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
 
                     }
                     deleteDialog.show()
-                    true
-                }
-                R.id.download -> {
-                    lifecycleScope.launch {
-                        val selectedObjects = getSelectedIDs()
-                        adapter.clearCheckedItems()
-                        for (id in selectedObjects){
-                            WorkManager.getInstance(requireContext()).cancelAllWorkByTag(id.toInt().toString())
-                        }
-                        withContext(Dispatchers.IO) {
-                            downloadViewModel.resetScheduleTimeForItemsAndStartDownload(selectedObjects)
-                        }
-                        actionMode?.finish()
-                    }
                     true
                 }
                 R.id.select_all -> {
@@ -469,7 +454,6 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                 downloadItem = {
                     downloadViewModel.deleteDownload(it.id)
                     it.downloadStartTime = 0
-                    WorkManager.getInstance(requireContext()).cancelAllWorkByTag(it.id.toString())
                     runBlocking {
                         downloadViewModel.queueDownloads(listOf(it))
                     }
@@ -493,7 +477,6 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
                         Toast.makeText(context, getString(R.string.download_rescheduled_to) + " " + it.time, Toast.LENGTH_LONG).show()
                         downloadViewModel.deleteDownload(downloadItem.id)
                         downloadItem.downloadStartTime = it.timeInMillis
-                        WorkManager.getInstance(requireContext()).cancelAllWorkByTag(downloadItem.id.toString())
                         runBlocking {
                             downloadViewModel.queueDownloads(listOf(downloadItem))
                         }
@@ -507,16 +490,11 @@ class QueuedDownloadsFragment : Fragment(), QueuedDownloadAdapter.OnItemClickLis
         lifecycleScope.launch {
             val selectedObjects = adapter.getSelectedObjectsCount(totalSize)
             if (actionMode == null) actionMode = (getActivity() as AppCompatActivity?)!!.startSupportActionMode(contextualActionBar)
-            val now = System.currentTimeMillis()
             actionMode?.apply {
                 if (selectedObjects == 0){
                     this.finish()
                 }else{
                     this.title = "$selectedObjects ${getString(R.string.selected)}"
-                    this.menu.findItem(R.id.download).isVisible = withContext(Dispatchers.IO){
-                        downloadViewModel.checkAllQueuedItemsAreScheduledAfterNow(adapter.checkedItems.toList(), adapter.inverted, now)
-                    }
-
                     this.menu.findItem(R.id.up).isVisible = position > 0
                     this.menu.findItem(R.id.down).isVisible = position < totalSize
                     this.menu.findItem(R.id.select_between).isVisible = false

@@ -5,13 +5,15 @@ import android.util.Patterns
 import com.deniscerri.ytdl.database.dao.ResultDao
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.models.ResultItem
+import com.deniscerri.ytdl.util.Extensions.isYoutubeURL
 import com.deniscerri.ytdl.util.InfoUtil
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import java.util.regex.Pattern
 
 class ResultRepository(private val resultDao: ResultDao, private val context: Context) {
-    private val tag: String = "ResultRepository"
+    val YTDLNIS_SEARCH = "YTDLNIS_SEARCH"
     val allResults : Flow<List<ResultItem>> = resultDao.getResults()
     var itemCount = MutableStateFlow(-1)
 
@@ -56,7 +58,7 @@ class ResultRepository(private val resultDao: ResultDao, private val context: Co
             deleteAll()
             itemCount.value = v.size
         }else{
-            v.filter { it.playlistTitle.isBlank() }.forEach { it.playlistTitle = "ytdlnis-Search" }
+            v.filter { it.playlistTitle.isBlank() }.forEach { it.playlistTitle = YTDLNIS_SEARCH }
         }
         if (addToResults){
             val ids = resultDao.insertMultiple(v)
@@ -87,6 +89,7 @@ class ResultRepository(private val resultDao: ResultDao, private val context: Co
             if (tmpToken.isEmpty()) break
             if (tmpToken == nextPageToken) break
             nextPageToken = tmpToken
+            delay(1000)
         } while (true)
         itemCount.value = items.size
         return items
@@ -99,7 +102,7 @@ class ResultRepository(private val resultDao: ResultDao, private val context: Co
             deleteAll()
             itemCount.value = items.size
         }else{
-            items.filter { it.playlistTitle.isNullOrBlank() }.forEach { it.playlistTitle = "ytdlnis-Search" }
+            items.filter { it.playlistTitle.isBlank() }.forEach { it.playlistTitle = YTDLNIS_SEARCH }
         }
 
         if (addToResults){
@@ -114,6 +117,10 @@ class ResultRepository(private val resultDao: ResultDao, private val context: Co
 
     suspend fun delete(item: ResultItem){
         resultDao.delete(item.id)
+    }
+
+    suspend fun deleteByUrl(url: String) {
+        resultDao.deleteByUrl(url)
     }
 
     suspend fun deleteAll(){
@@ -131,6 +138,10 @@ class ResultRepository(private val resultDao: ResultDao, private val context: Co
 
     fun getItemByURL(url: String): ResultItem? {
         return resultDao.getResultByURL(url)
+    }
+
+    fun getAllByURL(url: String) : List<ResultItem> {
+        return resultDao.getAllByURL(url)
     }
 
     fun getAllByIDs(ids: List<Long>) : List<ResultItem> {
@@ -161,9 +172,7 @@ class ResultRepository(private val resultDao: ResultDao, private val context: Co
 
     private fun getQueryType(inputQuery: String) : SourceType {
         var type = SourceType.SEARCH_QUERY
-        val p = Pattern.compile("((^(https?)://)?(www.)?(m.)?youtu(.be)?)|(^(https?)://(www.)?piped.video)")
-        val m = p.matcher(inputQuery)
-        if (m.find()) {
+        if (inputQuery.isYoutubeURL()) {
             type = SourceType.YOUTUBE_VIDEO
             if (inputQuery.contains("playlist?list=")) {
                 type = SourceType.YOUTUBE_PLAYLIST
@@ -182,7 +191,7 @@ class ResultRepository(private val resultDao: ResultDao, private val context: Co
                 val info = getResultsFromSource(downloadItem.url, resetResults = false, addToResults = false, singleItem = true).first()
                 if (downloadItem.title.isEmpty()) downloadItem.title = info.title
                 if (downloadItem.author.isEmpty()) downloadItem.author = info.author
-                if (downloadItem.playlistTitle.isEmpty() && downloadItem.playlistTitle != "ytdlnis-Search") downloadItem.playlistTitle = info.playlistTitle
+                if (downloadItem.playlistTitle.isNotBlank() && downloadItem.playlistTitle != YTDLNIS_SEARCH) downloadItem.playlistTitle = info.playlistTitle
                 downloadItem.duration = info.duration
                 downloadItem.website = info.website
                 if (downloadItem.thumb.isEmpty()) downloadItem.thumb = info.thumb

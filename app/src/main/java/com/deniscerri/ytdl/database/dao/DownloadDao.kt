@@ -1,5 +1,6 @@
 package com.deniscerri.ytdl.database.dao
 
+import android.util.Log
 import androidx.paging.PagingSource
 import androidx.room.Dao
 import androidx.room.Insert
@@ -10,6 +11,7 @@ import androidx.room.Transaction
 import androidx.room.Update
 import androidx.room.Upsert
 import com.deniscerri.ytdl.database.models.DownloadItem
+import com.deniscerri.ytdl.database.models.DownloadItemConfigureMultiple
 import com.deniscerri.ytdl.database.models.DownloadItemSimple
 import com.deniscerri.ytdl.database.models.Format
 import com.deniscerri.ytdl.database.repository.DownloadRepository
@@ -24,8 +26,9 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE status='Active'")
     fun getActiveDownloads() : Flow<List<DownloadItem>>
 
+    @RewriteQueriesToDropUnusedColumns
     @Query("SELECT * FROM downloads WHERE status = 'Processing'")
-    fun getProcessingDownloads() : Flow<List<DownloadItem>>
+    fun getProcessingDownloads() : Flow<List<DownloadItemConfigureMultiple>>
 
     @Query("SELECT COUNT(*) FROM downloads WHERE status in (:statuses)")
     fun getDownloadsCountFlow(statuses: List<String>) : Flow<Int>
@@ -42,6 +45,11 @@ interface DownloadDao {
     """)
     fun getProcessingDownloadTypes() : List<String>
 
+    @Query("""
+        SELECT DISTINCT container from downloads where status = 'Processing'
+    """)
+    fun getProcessingDownloadContainers() : List<String>
+
 
     @Query("UPDATE downloads set status = 'Processing' WHERE id in (:ids)")
     suspend fun updateItemsToProcessing(ids: List<Long>)
@@ -50,25 +58,29 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE status = 'Processing' ORDER BY id LIMIT 1")
     fun getFirstProcessingDownload() : DownloadItem
 
-    @Query("SELECT * FROM downloads WHERE status='Active'")
-    fun getActiveAndPausedDownloadsList() : List<DownloadItem>
 
     @Query("SELECT * FROM downloads WHERE status = 'Processing'")
     fun getProcessingDownloadsList() : List<DownloadItem>
 
-    @Query("UPDATE downloads set downloadStartTime=:time, status='Scheduled' WHERE status ='Processing'")
-    suspend fun updateProcessingDownloadTime(time: Long)
-
     @Query("UPDATE downloads set downloadPath=:path WHERE status ='Processing'")
     suspend fun updateProcessingDownloadPath(path: String)
 
+    @Query("UPDATE downloads set container=:cont WHERE status ='Processing'")
+    suspend fun updateProcessingContainer(cont: String)
+
     @Query("SELECT * FROM downloads WHERE status='Active'")
-    suspend fun getActiveDownloadsList() : List<DownloadItem>
+    fun getActiveDownloadsList() : List<DownloadItem>
+
+    @Query("SELECT * FROM downloads WHERE url=:url AND status='Processing'")
+    fun getProcessingDownloadsByUrl(url: String) : List<DownloadItem>
+
+    @Query("DELETE from downloads where status = 'Processing' AND url=:url")
+    suspend fun deleteProcessingByUrl(url: String)
 
     @Query("SELECT * FROM downloads WHERE status in('Active','Queued', 'Scheduled')")
     fun getActiveAndQueuedDownloadsList() : List<DownloadItem>
-    @Query("UPDATE downloads SET status='Queued' where status in ('Active', 'QueuedPaused', 'ActivePaused')")
-    suspend fun resetActivePausedItems()
+    @Query("UPDATE downloads SET status='Queued' where status = 'Active'")
+    suspend fun resetActiveToQueued()
 
     @Query("SELECT id FROM downloads WHERE status in('Active','Queued')")
     fun getActiveAndQueuedDownloadIDs() : List<Long>
@@ -102,8 +114,6 @@ interface DownloadDao {
     @Query("SELECT * FROM downloads WHERE status='Cancelled' ORDER BY id DESC")
     fun getCancelledDownloadsList() : List<DownloadItem>
 
-    @Query("SELECT * FROM downloads WHERE status LIKE '%Paused%'")
-    fun getPausedDownloadsList() : List<DownloadItem>
     @RewriteQueriesToDropUnusedColumns
     @Query("SELECT * FROM downloads WHERE status='Error' ORDER BY id DESC")
     fun getErroredDownloads() : PagingSource<Int, DownloadItemSimple>
@@ -159,11 +169,17 @@ interface DownloadDao {
     @Query("DELETE FROM downloads WHERE status='Error'")
     suspend fun deleteErrored()
 
+    @Query("DELETE FROM downloads WHERE status='Queued'")
+    suspend fun deleteQueued()
+
     @Query("DELETE FROM downloads WHERE status='Saved'")
     suspend fun deleteSaved()
 
     @Query("DELETE FROM downloads WHERE status='Processing'")
     suspend fun deleteProcessing()
+
+    @Query("DELETE FROM downloads WHERE status='Duplicate'")
+    suspend fun deleteWithDuplicateStatus()
 
     @Query("DELETE FROM downloads WHERE status='Scheduled'")
     suspend fun deleteScheduled()
@@ -178,7 +194,18 @@ interface DownloadDao {
     suspend fun deleteSingleProcessing(id: Long)
 
     @Upsert
-    suspend fun update(item: DownloadItem)
+    suspend fun update(item: DownloadItem) : Long
+
+    @Transaction
+    suspend fun updateAll(list: List<DownloadItem>) : List<DownloadItem> {
+        val toReturn = mutableListOf<DownloadItem>()
+        list.forEach {
+            it.id = update(it)
+            toReturn.add(it)
+        }
+
+        return toReturn
+    }
 
     @Query("UPDATE downloads set status=:status where id=:id")
     suspend fun setStatus(id: Long, status: String)
@@ -269,10 +296,16 @@ interface DownloadDao {
     @Query("Update downloads set id=:newId where id=:id")
     suspend fun updateDownloadID(id: Long, newId: Long)
 
-
     @Query("SELECT id from downloads WHERE id > :item1 AND id < :item2 AND status in (:statuses) ORDER BY id DESC")
     fun getIDsBetweenTwoItems(item1: Long, item2: Long, statuses: List<String>) : List<Long>
 
     @Query("SELECT id from downloads WHERE id > :item1 AND id < :item2 AND status in('Scheduled') ORDER BY downloadStartTime, id")
     fun getScheduledIDsBetweenTwoItems(item1: Long, item2: Long) : List<Long>
+
+
+    @Query("UPDATE downloads set incognito=:incognito WHERE status='Processing'")
+    suspend fun updateProcessingIncognito(incognito: Boolean)
+
+    @Query("SELECT COUNT(id) FROM downloads WHERE status='Processing' AND incognito='1'")
+    fun getProcessingAsIncognitoCount(): Int
 }

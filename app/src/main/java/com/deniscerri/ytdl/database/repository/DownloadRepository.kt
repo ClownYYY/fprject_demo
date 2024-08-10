@@ -23,9 +23,11 @@ import com.deniscerri.ytdl.App
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.dao.DownloadDao
 import com.deniscerri.ytdl.database.models.DownloadItem
+import com.deniscerri.ytdl.database.models.DownloadItemConfigureMultiple
 import com.deniscerri.ytdl.database.models.DownloadItemSimple
 import com.deniscerri.ytdl.util.Extensions.toListString
 import com.deniscerri.ytdl.util.FileUtil
+import com.deniscerri.ytdl.work.AlarmScheduler
 import com.deniscerri.ytdl.work.DownloadWorker
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -42,7 +44,7 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
         pagingSourceFactory = {downloadDao.getAllDownloads()}
     )
     val activeDownloads : Flow<List<DownloadItem>> = downloadDao.getActiveDownloads().distinctUntilChanged()
-    val processingDownloads : Flow<List<DownloadItem>> = downloadDao.getProcessingDownloads().distinctUntilChanged()
+    val processingDownloads : Flow<List<DownloadItemConfigureMultiple>> = downloadDao.getProcessingDownloads().distinctUntilChanged()
     val queuedDownloads : Pager<Int, DownloadItemSimple> = Pager(
         config = PagingConfig(pageSize = 20, initialLoadSize = 20, prefetchDistance = 1),
         pagingSourceFactory = {downloadDao.getQueuedDownloads()}
@@ -73,7 +75,7 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
     val scheduledDownloadsCount : Flow<Int> = downloadDao.getDownloadsCountByStatusFlow(listOf(Status.Scheduled).toListString())
 
     enum class Status {
-        Active, ActivePaused, Queued, Error, Cancelled, Saved, Processing, Scheduled
+        Active, Queued, Error, Cancelled, Saved, Processing, Scheduled, Duplicate
     }
 
     suspend fun insert(item: DownloadItem) : Long {
@@ -101,6 +103,10 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
         downloadDao.update(item)
     }
 
+    suspend fun updateAll(list: List<DownloadItem>) : List<DownloadItem> {
+        return downloadDao.updateAll(list)
+    }
+
     suspend fun updateWithoutUpsert(item: DownloadItem){
         kotlin.runCatching { downloadDao.updateWithoutUpsert(item) }
     }
@@ -118,12 +124,16 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
         return downloadDao.getDownloadsByIds(ids)
     }
 
-    fun getAllItemsByIDsFlow(ids: List<Long>) : Flow<List<DownloadItem>> {
-         return downloadDao.getDownloadsByIdsFlow(ids)
+    fun getActiveDownloads() : List<DownloadItem> {
+        return downloadDao.getActiveDownloadsList()
     }
 
-    fun getActiveDownloads() : List<DownloadItem> {
-        return downloadDao.getActiveAndPausedDownloadsList()
+    fun getProcessingDownloadsByUrl(url: String) : List<DownloadItem> {
+        return downloadDao.getProcessingDownloadsByUrl(url)
+    }
+
+    suspend fun deleteProcessingByUrl(url: String) {
+        downloadDao.deleteProcessingByUrl(url)
     }
 
     fun getProcessingDownloads() : List<DownloadItem> {
@@ -132,10 +142,6 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
 
     fun getActiveAndQueuedDownloads() : List<DownloadItem> {
         return downloadDao.getActiveAndQueuedDownloadsList()
-    }
-
-    suspend fun updateProcessingDownloadTime(time: Long) {
-        downloadDao.updateProcessingDownloadTime(time)
     }
 
     fun getActiveAndQueuedDownloadIDs() : List<Long> {
@@ -154,10 +160,6 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
         return downloadDao.getCancelledDownloadsList()
     }
 
-    fun getPausedDownloads() : List<DownloadItem> {
-        return downloadDao.getPausedDownloadsList()
-    }
-
     fun getErroredDownloads() : List<DownloadItem> {
         return downloadDao.getErroredDownloadsList()
     }
@@ -172,6 +174,10 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
         deleteCache(cancelled)
     }
 
+    fun getActiveDownloadsCount() : Int {
+        return downloadDao.getDownloadsCountByStatus(listOf(Status.Active).toListString())
+    }
+
     suspend fun deleteScheduled() {
         downloadDao.deleteScheduled()
     }
@@ -182,12 +188,20 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
         deleteCache(errored)
     }
 
+    suspend fun deleteQueued() {
+        downloadDao.deleteQueued()
+    }
+
     suspend fun deleteSaved(){
         downloadDao.deleteSaved()
     }
 
     suspend fun deleteProcessing(){
         downloadDao.deleteProcessing()
+    }
+
+    suspend fun deleteWithDuplicateStatus() {
+        downloadDao.deleteWithDuplicateStatus()
     }
 
     suspend fun deleteAllWithIDs(ids: List<Long>){
@@ -207,16 +221,8 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
         downloadDao.removeAllLogID()
     }
 
-    fun getFilteredProcessingDownloads(ids: List<Long>) : Flow<List<DownloadItem>> {
-        return downloadDao.getProcessingDownloads()
-            .map {
-                it.filter { ids.contains(it.id) }
-            }
-    }
-
-
     @SuppressLint("RestrictedApi")
-    suspend fun startDownloadWorker(queuedItems: List<DownloadItem>, context: Context, inputData: Data.Builder = Data.Builder()) {
+    suspend fun startDownloadWorker(queuedItems: List<DownloadItem>, context: Context, inputData: Data.Builder = Data.Builder()) : Result<String> {
         val sharedPreferences = PreferenceManager.getDefaultSharedPreferences(context)
         val allowMeteredNetworks = sharedPreferences.getBoolean("metered_networks", true)
         val workManager = WorkManager.getInstance(context)
@@ -234,22 +240,22 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
                 if (delay <= 60000L) delay = 0L
             }
 
+            val useAlarmForScheduling = sharedPreferences.getBoolean("use_alarm_for_scheduling", false)
+
+            if (delay > 0L && useAlarmForScheduling) {
+                AlarmScheduler(context).scheduleAt(queuedItems.minBy { it.downloadStartTime }.downloadStartTime)
+                return Result.success("")
+            }
+
 
             val workConstraints = Constraints.Builder()
             if (!allowMeteredNetworks) workConstraints.setRequiredNetworkType(NetworkType.UNMETERED)
-            else {
-                workConstraints.setRequiredNetworkType(NetworkType.CONNECTED)
-            }
 
             val workRequest = OneTimeWorkRequestBuilder<DownloadWorker>()
                 .addTag("download")
                 .setConstraints(workConstraints.build())
                 .setInitialDelay(delay, TimeUnit.MILLISECONDS)
                 .setInputData(inputData.build())
-
-            queuedItems.forEach {
-                workRequest.addTag(it.id.toString())
-            }
 
             workManager.enqueueUniqueWork(
                 System.currentTimeMillis().toString(),
@@ -258,24 +264,22 @@ class DownloadRepository(private val downloadDao: DownloadDao) {
             )
 
         }
-
-        val handler = Handler(Looper.getMainLooper())
+        val message = StringBuilder()
 
         val isCurrentNetworkMetered = (context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager).isActiveNetworkMetered
         if (!allowMeteredNetworks && isCurrentNetworkMetered){
-            handler.postDelayed({
-                Toast.makeText(context, context.getString(R.string.metered_network_download_start_info), Toast.LENGTH_LONG).show()
-            }, 0)
+            message.appendLine(context.getString(R.string.metered_network_download_start_info))
         }
 
-        val first = queuedItems.first()
-        if (first.downloadStartTime > 0L) {
-            val date = SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "ddMMMyyyy - HHmm"), Locale.getDefault()).format(queuedItems.first().downloadStartTime)
-            handler.postDelayed({
-                Toast.makeText(context, context.getString(R.string.download_rescheduled_to) + " " + date, Toast.LENGTH_LONG).show()
-            }, 0)
+        if (queuedItems.isNotEmpty()) {
+            val first = queuedItems.first()
+            if (first.downloadStartTime > 0L) {
+                val date = SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "ddMMMyyyy - HHmm"), Locale.getDefault()).format(queuedItems.first().downloadStartTime)
+                message.appendLine(context.getString(R.string.download_rescheduled_to) + " " + date)
+            }
         }
 
+        return Result.success(message.toString())
     }
 
 }

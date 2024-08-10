@@ -37,6 +37,7 @@ import com.deniscerri.ytdl.util.Extensions.enableFastScroll
 import com.deniscerri.ytdl.util.Extensions.forceFastScrollMode
 import com.deniscerri.ytdl.util.Extensions.toListString
 import com.deniscerri.ytdl.util.UiUtil
+import com.deniscerri.ytdl.work.AlarmScheduler
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.color.MaterialColors
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -112,11 +113,8 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
     override fun onActionButtonClick(itemID: Long) {
         lifecycleScope.launch {
             runCatching {
-                val item = withContext(Dispatchers.IO){
-                    downloadViewModel.getItemByID(itemID)
-                }
                 withContext(Dispatchers.IO){
-                    downloadViewModel.resetScheduleTimeForItemsAndStartDownload(listOf(item.id))
+                    downloadViewModel.resetScheduleTimeForItemsAndStartDownload(listOf(itemID))
                 }
             }.onFailure {
                 Toast.makeText(requireContext(), it.message, Toast.LENGTH_LONG).show()
@@ -141,7 +139,6 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
                 downloadItem = {
                     downloadViewModel.deleteDownload(it.id)
                     it.downloadStartTime = 0
-                    WorkManager.getInstance(requireContext()).cancelAllWorkByTag(it.id.toString())
                     runBlocking {
                         downloadViewModel.queueDownloads(listOf(it))
                     }
@@ -159,7 +156,6 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
                         Toast.makeText(context, getString(R.string.download_rescheduled_to) + " " + it.time, Toast.LENGTH_LONG).show()
                         downloadViewModel.deleteDownload(downloadItem.id)
                         downloadItem.downloadStartTime = it.timeInMillis
-                        WorkManager.getInstance(requireContext()).cancelAllWorkByTag(downloadItem.id.toString())
                         runBlocking {
                             downloadViewModel.queueDownloads(listOf(downloadItem))
                             adapter.notifyItemChanged(position)
@@ -272,9 +268,6 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
                     lifecycleScope.launch {
                         val selectedObjects = getSelectedIDs()
                         adapter.clearCheckedItems()
-                        for (id in selectedObjects){
-                            WorkManager.getInstance(requireContext()).cancelAllWorkByTag(id.toInt().toString())
-                        }
                         withContext(Dispatchers.IO) {
                             downloadViewModel.resetScheduleTimeForItemsAndStartDownload(selectedObjects)
                         }
@@ -343,7 +336,7 @@ class ScheduledDownloadsFragment : Fragment(), ScheduledDownloadAdapter.OnItemCl
                                 downloadViewModel.getItemByID(itemID)
                             }
                             downloadViewModel.deleteDownload(deletedItem.id)
-                            Snackbar.make(scheduledRecyclerView, getString(R.string.you_are_going_to_delete) + ": " + deletedItem.title, Snackbar.LENGTH_LONG)
+                            Snackbar.make(scheduledRecyclerView, getString(R.string.you_are_going_to_delete) + ": " + deletedItem.title.ifEmpty { deletedItem.url }, Snackbar.LENGTH_LONG)
                                 .setAction(getString(R.string.undo)) {
                                     downloadViewModel.insert(deletedItem)
                                 }.show()

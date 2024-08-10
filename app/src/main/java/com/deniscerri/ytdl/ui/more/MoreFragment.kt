@@ -9,22 +9,28 @@ import android.view.View
 import android.view.ViewGroup
 import android.widget.CheckBox
 import android.widget.TextView
+import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.preference.PreferenceManager
+import androidx.work.WorkManager
 import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.repository.DownloadRepository
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.ui.more.settings.SettingsActivity
 import com.deniscerri.ytdl.ui.more.terminal.TerminalActivity
+import com.deniscerri.ytdl.util.NavbarUtil
+import com.deniscerri.ytdl.util.NotificationUtil
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import kotlin.system.exitProcess
 
 class MoreFragment : Fragment() {
@@ -34,6 +40,7 @@ class MoreFragment : Fragment() {
     private lateinit var logs: TextView
     private lateinit var commandTemplates: TextView
     private lateinit var downloadQueue: TextView
+    private lateinit var downloads: TextView
     private lateinit var cookies: TextView
     private lateinit var observeSources: TextView
     private lateinit var terminateApp: TextView
@@ -57,11 +64,26 @@ class MoreFragment : Fragment() {
         terminal = view.findViewById(R.id.terminal)
         logs = view.findViewById(R.id.logs)
         commandTemplates = view.findViewById(R.id.command_templates)
+        downloads = view.findViewById(R.id.downloads)
         downloadQueue = view.findViewById(R.id.download_queue)
         cookies = view.findViewById(R.id.cookies)
         observeSources = view.findViewById(R.id.observe_sources)
         terminateApp = view.findViewById(R.id.terminate)
         settings = view.findViewById(R.id.settings)
+
+        var showingTerminal = false
+        var showingDownloads = false
+        var showingDownloadQueue = false
+
+        NavbarUtil.getNavBarItems(requireContext()).apply {
+            showingTerminal = any { n -> n.itemId == R.id.terminalActivity && n.isVisible }
+            showingDownloads = any { n -> n.itemId == R.id.historyFragment && n.isVisible }
+            showingDownloadQueue = any { n -> n.itemId == R.id.downloadQueueMainFragment && n.isVisible }
+        }
+
+        terminal.isVisible = !showingTerminal
+        downloads.isVisible = !showingDownloads
+        downloadQueue.isVisible = !showingDownloadQueue
 
         terminal.setOnClickListener {
             val intent = Intent(context, TerminalActivity::class.java)
@@ -74,6 +96,10 @@ class MoreFragment : Fragment() {
 
         commandTemplates.setOnClickListener {
             findNavController().navigate(R.id.commandTemplatesFragment)
+        }
+
+        downloads.setOnClickListener {
+            findNavController().navigate(R.id.historyFragment)
         }
 
         downloadQueue.setOnClickListener {
@@ -103,28 +129,40 @@ class MoreFragment : Fragment() {
                     doNotShowAgain = compoundButton.isChecked
                 }
 
+                val workManager = WorkManager.getInstance(requireContext())
+                val notificationUtil = NotificationUtil(requireContext())
+
                 terminateDialog.setNegativeButton(getString(R.string.cancel)) { dialogInterface: DialogInterface, _: Int -> dialogInterface.cancel() }
                 terminateDialog.setPositiveButton(getString(R.string.ok)) { diag: DialogInterface?, _: Int ->
-                    runBlocking {
-                        val job : Job = lifecycleScope.launch(Dispatchers.IO) {
-                            val activeDownloads = downloadViewModel.getActiveDownloads().toMutableList()
-                            activeDownloads.map { it.status = DownloadRepository.Status.Queued.toString() }
-                            activeDownloads.forEach {
-                                downloadViewModel.updateDownload(it)
-                            }
+                    lifecycleScope.launch {
+                        val activeDownloads = withContext(Dispatchers.IO){
+                            downloadViewModel.getActiveDownloadsCount()
                         }
-                        runBlocking {
-                            job.join()
-                            if (doNotShowAgain){
-                                mainSharedPreferencesEditor.putBoolean("ask_terminate_app", false)
-                                mainSharedPreferencesEditor.commit()
+                        if (activeDownloads > 0) {
+                            workManager.cancelAllWorkByTag("download")
+                            val activeDownloadsList = withContext(Dispatchers.IO){
+                                downloadViewModel.getActiveDownloads()
                             }
-                            mainActivity.finishAndRemoveTask()
-                            mainActivity.finishAffinity()
-                            exitProcess(0)
-                        }
-                    }
 
+                            activeDownloadsList.forEach {
+                                it.status = DownloadRepository.Status.Queued.toString()
+                                YoutubeDL.getInstance().destroyProcessById(it.id.toString())
+                                notificationUtil.cancelDownloadNotification(it.id.toInt())
+                                withContext(Dispatchers.IO) {
+                                    downloadViewModel.updateDownload(it)
+                                }
+                            }
+                            mainSharedPreferencesEditor.putBoolean("paused_downloads", true).apply()
+                        }
+
+                        if (doNotShowAgain){
+                            mainSharedPreferencesEditor.putBoolean("ask_terminate_app", false).apply()
+                        }
+                        mainSharedPreferencesEditor.commit()
+                        mainActivity.finishAndRemoveTask()
+                        mainActivity.finishAffinity()
+                        exitProcess(0)
+                    }
                 }
                 terminateDialog.show()
             }else{

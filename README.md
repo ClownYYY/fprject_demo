@@ -15,6 +15,8 @@
 	<a href="https://github.com/deniscerri/ytdlnis/blob/main/README-pt.md">Português</a>
 	&nbsp;&nbsp;| &nbsp;&nbsp;
 	<a href="https://github.com/deniscerri/ytdlnis/blob/main/README-es.md">Español</a>
+	&nbsp;&nbsp;| &nbsp;&nbsp;
+	<a href="https://github.com/deniscerri/ytdlnis/blob/main/README-ja.md">Japanese</a>
 </div>
 
 <h3 align="center">
@@ -106,7 +108,7 @@
 
 Join our [Telegram Channel](https://t.me/ytdlnis) or [Discord](https://discord.gg/WW3KYWxAPm) for discussion, announcements, and releases!
 
-## 🔑 Connect with ReVanced
+## 🔑 Connect with ReVanced and LibreTube
 
 The App's package name is "com.deniscerri.ytdl"
 

@@ -1,36 +1,70 @@
 package com.deniscerri.ytdl.ui.downloads
 
+import android.animation.AnimatorSet
 import android.annotation.SuppressLint
 import android.app.Activity
+import android.content.DialogInterface
 import android.content.SharedPreferences
+import android.graphics.Canvas
+import android.graphics.Color
 import android.os.Bundle
 import android.view.LayoutInflater
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.AccelerateDecelerateInterpolator
+import android.widget.LinearLayout
+import android.widget.ListView
 import android.widget.RelativeLayout
 import android.widget.TextView
+import android.widget.Toast
+import androidx.annotation.OptIn
+import androidx.appcompat.app.AppCompatActivity
+import androidx.appcompat.view.ActionMode
+import androidx.coordinatorlayout.widget.CoordinatorLayout
+import androidx.core.os.bundleOf
 import androidx.core.view.isVisible
+import androidx.core.view.marginBottom
+import androidx.core.view.setMargins
+import androidx.core.view.updateLayoutParams
 import androidx.fragment.app.Fragment
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.navigation.fragment.findNavController
 import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
-import androidx.work.WorkInfo
 import androidx.work.WorkManager
-import androidx.work.WorkQuery
+import com.afollestad.materialdialogs.utils.MDUtil.getStringArray
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.ui.adapter.ActiveDownloadAdapter
+import com.deniscerri.ytdl.ui.adapter.QueuedDownloadAdapter
+import com.deniscerri.ytdl.util.Extensions.enableFastScroll
 import com.deniscerri.ytdl.util.Extensions.forceFastScrollMode
+import com.deniscerri.ytdl.util.Extensions.toListString
+import com.deniscerri.ytdl.util.FileUtil
 import com.deniscerri.ytdl.util.NotificationUtil
+import com.deniscerri.ytdl.util.UiUtil
 import com.deniscerri.ytdl.work.DownloadWorker
+import com.google.android.material.badge.BadgeDrawable
+import com.google.android.material.badge.BadgeUtils
+import com.google.android.material.badge.ExperimentalBadgeUtils
+import com.google.android.material.bottomsheet.BottomSheetBehavior
+import com.google.android.material.bottomsheet.BottomSheetDialog
+import com.google.android.material.button.MaterialButton
+import com.google.android.material.card.MaterialCardView
+import com.google.android.material.color.MaterialColors
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.floatingactionbutton.ExtendedFloatingActionButton
 import com.google.android.material.progressindicator.LinearProgressIndicator
+import com.google.android.material.snackbar.Snackbar
 import com.yausername.youtubedl_android.YoutubeDL
+import it.xabaras.android.recyclerview.swipedecorator.RecyclerViewSwipeDecorator
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
@@ -47,6 +81,7 @@ class ActiveDownloadsFragment : Fragment(), ActiveDownloadAdapter.OnItemClickLis
     private var activity: Activity? = null
     private lateinit var downloadViewModel : DownloadViewModel
 
+    //private lateinit var activeDownloadsLinear: LinearLayout
     private lateinit var activeRecyclerView : RecyclerView
     private lateinit var activeDownloads : ActiveDownloadAdapter
 
@@ -67,7 +102,8 @@ class ActiveDownloadsFragment : Fragment(), ActiveDownloadAdapter.OnItemClickLis
         return fragmentView
     }
 
-    @SuppressLint("NotifyDataSetChanged")
+    @OptIn(ExperimentalBadgeUtils::class)
+    @SuppressLint("NotifyDataSetChanged", "RestrictedApi")
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
@@ -90,57 +126,79 @@ class ActiveDownloadsFragment : Fragment(), ActiveDownloadAdapter.OnItemClickLis
 
         pause.setOnClickListener {
             lifecycleScope.launch {
+                pause.isEnabled = false
+                delay(1000)
                 workManager.cancelAllWorkByTag("download")
-                withContext(Dispatchers.IO){
+                val activeDownloadsList = withContext(Dispatchers.IO){
                     downloadViewModel.getActiveDownloads()
-                }.forEach {
+                }
+
+                activeDownloadsList.forEach {
                     YoutubeDL.getInstance().destroyProcessById(it.id.toString())
+                    notificationUtil.cancelDownloadNotification(it.id.toInt())
                 }
                 preferences.edit().putBoolean("paused_downloads", true).apply()
-                activeDownloads.notifyDataSetChanged()
-                resume.isVisible = true
                 pause.isVisible = false
+                resume.isEnabled = false
+                resume.isVisible = true
+                activeDownloads.notifyDataSetChanged()
+                resume.isEnabled = true
+
             }
         }
 
         resume.setOnClickListener {
             lifecycleScope.launch {
+                resume.isEnabled = false
+                delay(1000)
                 preferences.edit().putBoolean("paused_downloads", false).apply()
                 resume.isVisible = false
+                pause.isEnabled = false
                 pause.isVisible = true
                 withContext(Dispatchers.IO) {
-                    downloadViewModel.resetActivePaused()
+                    downloadViewModel.resetActiveToQueued()
                     downloadViewModel.startDownloadWorker(listOf())
                     withContext(Dispatchers.Main){
                         activeDownloads.notifyDataSetChanged()
+                        pause.isEnabled = true
                     }
                 }
             }
         }
 
         lifecycleScope.launch {
-            downloadViewModel.activeDownloadsCount.collectLatest {
-                noResults.isVisible = it == 0
-                val pausedDownloads = preferences.getBoolean("paused_downloads", false)
-                pause.isVisible = it > 0 && !pausedDownloads
+            val activeCount = withContext(Dispatchers.IO) {
+                downloadViewModel.getActiveDownloadsCount()
             }
+
+            val queuedCount = withContext(Dispatchers.IO) {
+                downloadViewModel.getQueuedDownloadsCount()
+            }
+
+            val pausedDownloads = preferences.getBoolean("paused_downloads", false)
+            pause.isVisible = (queuedCount > 0 || activeCount > 0) && !pausedDownloads
+            resume.isVisible = (queuedCount > 0 || activeCount > 0) && pausedDownloads
         }
 
         lifecycleScope.launch {
             downloadViewModel.activeQueuedDownloadsCount.collectLatest {
-                val pausedDownloads = preferences.getBoolean("paused_downloads", false)
-                resume.isVisible = it > 0 && pausedDownloads
+                if (it == 0) {
+                    pause.isVisible = false
+                    resume.isVisible = false
+                }
             }
         }
 
         lifecycleScope.launch {
             downloadViewModel.activeDownloads.collectLatest {
-                delay(100)
+                noResults.isVisible = it.isEmpty()
                 activeDownloads.submitList(it)
             }
         }
+
     }
 
+    //dont remove
     @Subscribe(threadMode = ThreadMode.MAIN)
     fun onDownloadProgressEvent(event: DownloadWorker.WorkerProgress) {
         val progressBar = requireView().findViewWithTag<LinearProgressIndicator>("${event.downloadItemID}##progress")
@@ -153,6 +211,7 @@ class ActiveDownloadsFragment : Fragment(), ActiveDownloadAdapter.OnItemClickLis
             }catch (ignored: Exception) {}
         }
     }
+
 
     override fun onStart() {
         super.onStart()
@@ -202,17 +261,6 @@ class ActiveDownloadsFragment : Fragment(), ActiveDownloadAdapter.OnItemClickLis
                 }
             }
 
-        }
-    }
-
-    override fun onResumeClick(itemID: Long) {
-        lifecycleScope.launch {
-            val item = withContext(Dispatchers.IO){
-                downloadViewModel.getItemByID(itemID)
-            }
-            withContext(Dispatchers.IO){
-                downloadViewModel.queueDownloads(listOf(item))
-            }
         }
     }
 

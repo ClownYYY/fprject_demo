@@ -24,6 +24,7 @@ import android.widget.TextView
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
+import androidx.core.os.bundleOf
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.media3.common.MediaItem
@@ -39,11 +40,11 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import androidx.work.WorkManager
 import com.deniscerri.ytdl.R
+import com.deniscerri.ytdl.database.models.DownloadItem
 import com.deniscerri.ytdl.database.models.ResultItem
 import com.deniscerri.ytdl.database.repository.DownloadRepository
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.database.viewmodel.ResultViewModel
-import com.deniscerri.ytdl.ui.adapter.ActiveDownloadAdapter
 import com.deniscerri.ytdl.ui.adapter.ActiveDownloadMinifiedAdapter
 import com.deniscerri.ytdl.ui.adapter.GenericDownloadAdapter
 import com.deniscerri.ytdl.util.Extensions.setFullScreen
@@ -282,29 +283,28 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
 
         lifecycleScope.launch {
             try {
-                val data : MutableList<String?>  = withContext(Dispatchers.IO){
+                val data = withContext(Dispatchers.IO) {
                     if (item.urls.isEmpty()) {
                         infoUtil.getStreamingUrlAndChapters(item.url)
-                    }else {
-                        item.urls.split("\n").toMutableList()
+                    }else{
+                        Pair(item.urls.split("\n"), null)
                     }
                 }
 
-                if (data.size > 1) data.removeFirst()
+                if (data.first.isEmpty()) throw Exception("No Data found!")
 
-                if (data.isEmpty()) throw Exception("No Streaming URL found!")
-                if (data.size == 2){
+                val urls = data.first
+                if (urls.size == 2){
                     val audioSource : MediaSource =
                         DefaultMediaSourceFactory(requireContext())
-                            .createMediaSource(MediaItem.fromUri(Uri.parse(data[0])))
+                            .createMediaSource(MediaItem.fromUri(Uri.parse(urls[0])))
                     val videoSource: MediaSource =
                         DefaultMediaSourceFactory(requireContext())
-                            .createMediaSource(MediaItem.fromUri(Uri.parse(data[1])))
+                            .createMediaSource(MediaItem.fromUri(Uri.parse(urls[1])))
                     player.setMediaSource(MergingMediaSource(videoSource, audioSource))
                 }else{
-                    player.addMediaItem(MediaItem.fromUri(Uri.parse(data[0])))
+                    player.addMediaItem(MediaItem.fromUri(Uri.parse(urls[0])))
                 }
-                player.addMediaItem(MediaItem.fromUri(Uri.parse(data[0])))
 
                 player.prepare()
                 player.play()
@@ -452,127 +452,28 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
                 downloadViewModel.getItemByID(itemID)
             }
 
-            val bottomSheet = BottomSheetDialog(requireContext())
-            bottomSheet.requestWindowFeature(Window.FEATURE_NO_TITLE)
-            bottomSheet.setContentView(R.layout.history_item_details_bottom_sheet)
-            val title = bottomSheet.findViewById<TextView>(R.id.bottom_sheet_title)
-            title!!.text = item.title.ifEmpty { "`${requireContext().getString(R.string.defaultValue)}`" }
-            val author = bottomSheet.findViewById<TextView>(R.id.bottom_sheet_author)
-            author!!.text = item.author.ifEmpty { "`${requireContext().getString(R.string.defaultValue)}`" }
-
-            // BUTTON ----------------------------------
-            val btn = bottomSheet.findViewById<MaterialButton>(R.id.downloads_download_button_type)
-
-            when (item.type) {
-                DownloadViewModel.Type.audio -> {
-                    btn!!.icon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_music)
-                }
-                DownloadViewModel.Type.video -> {
-                    btn!!.icon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_video)
-                }
-                else -> {
-                    btn!!.icon = ContextCompat.getDrawable(requireContext(), R.drawable.ic_terminal)
-                }
-            }
-
-            val time = bottomSheet.findViewById<Chip>(R.id.time)
-            val formatNote = bottomSheet.findViewById<Chip>(R.id.format_note)
-            val container = bottomSheet.findViewById<Chip>(R.id.container_chip)
-            val codec = bottomSheet.findViewById<Chip>(R.id.codec)
-            val fileSize = bottomSheet.findViewById<Chip>(R.id.file_size)
-
-            if (item.downloadStartTime <= System.currentTimeMillis() / 1000) time!!.visibility = View.GONE
-            else {
-                val calendar = Calendar.getInstance()
-                calendar.timeInMillis = item.downloadStartTime
-                time!!.text = SimpleDateFormat(DateFormat.getBestDateTimePattern(Locale.getDefault(), "ddMMMyyyy - HHmm"), Locale.getDefault()).format(calendar.time)
-
-                time.setOnClickListener {
-                    UiUtil.showDatePicker(parentFragmentManager) {
-                        bottomSheet.dismiss()
-                        Toast.makeText(context, getString(R.string.download_rescheduled_to) + " " + it.time, Toast.LENGTH_LONG).show()
-                        downloadViewModel.deleteDownload(item.id)
-                        item.downloadStartTime = it.timeInMillis
-                        WorkManager.getInstance(requireContext()).cancelAllWorkByTag(item.id.toString())
-                        runBlocking {
-                            downloadViewModel.queueDownloads(listOf(item))
-                        }
+            UiUtil.showDownloadItemDetailsCard(
+                item,
+                requireActivity(),
+                DownloadRepository.Status.valueOf(item.status),
+                removeItem = { it: DownloadItem, sheet: BottomSheetDialog ->
+                    sheet.hide()
+                    removeQueuedItem(itemID)
+                },
+                downloadItem = {
+                    runBlocking{
+                        downloadViewModel.queueDownloads(listOf(it))
                     }
-                }
-            }
-
-            if (item.format.format_note == "?" || item.format.format_note == "") formatNote!!.visibility =
-                View.GONE
-            else formatNote!!.text = item.format.format_note
-
-            if (item.format.container != "") container!!.text = item.format.container.uppercase()
-            else container!!.visibility = View.GONE
-
-            val codecText =
-                if (item.format.encoding != "") {
-                    item.format.encoding.uppercase()
-                }else if (item.format.vcodec != "none" && item.format.vcodec != ""){
-                    item.format.vcodec.uppercase()
-                } else {
-                    item.format.acodec.uppercase()
-                }
-            if (codecText == "" || codecText == "none"){
-                codec!!.visibility = View.GONE
-            }else{
-                codec!!.visibility = View.VISIBLE
-                codec.text = codecText
-            }
-
-            val fileSizeReadable = FileUtil.convertFileSize(item.format.filesize)
-            if (fileSizeReadable == "?") fileSize!!.visibility = View.GONE
-            else fileSize!!.text = fileSizeReadable
-
-            val link = bottomSheet.findViewById<Button>(R.id.bottom_sheet_link)
-            val url = item.url
-            link!!.text = url
-            link.tag = itemID
-            link.setOnClickListener{
-                bottomSheet.dismiss()
-                UiUtil.openLinkIntent(requireContext(), item.url)
-            }
-            link.setOnLongClickListener{
-                bottomSheet.dismiss()
-                UiUtil.copyLinkToClipBoard(requireContext(), item.url)
-                true
-            }
-            val remove = bottomSheet.findViewById<Button>(R.id.bottomsheet_remove_button)
-            remove!!.tag = itemID
-            remove.setOnClickListener{
-                bottomSheet.hide()
-                removeQueuedItem(itemID)
-            }
-            val openFile = bottomSheet.findViewById<Button>(R.id.bottomsheet_open_file_button)
-            openFile!!.visibility = View.GONE
-
-
-
-            val downloadNow = bottomSheet.findViewById<Button>(R.id.bottomsheet_redownload_button)
-            if (item.downloadStartTime <= System.currentTimeMillis() / 1000) downloadNow!!.visibility = View.GONE
-            else{
-                downloadNow!!.text = getString(R.string.download_now)
-                downloadNow.setOnClickListener {
-                    bottomSheet.dismiss()
-                    downloadViewModel.deleteDownload(item.id)
-                    item.downloadStartTime = 0
-                    WorkManager.getInstance(requireContext()).cancelAllWorkByTag(item.id.toString())
-                    runBlocking {
-                        downloadViewModel.queueDownloads(listOf(item))
-                    }
-                }
-            }
-
-            bottomSheet.show()
-            val displayMetrics = DisplayMetrics()
-            requireActivity().windowManager.defaultDisplay.getMetrics(displayMetrics)
-            bottomSheet.behavior.peekHeight = displayMetrics.heightPixels
-            bottomSheet.window!!.setLayout(
-                ViewGroup.LayoutParams.MATCH_PARENT,
-                ViewGroup.LayoutParams.MATCH_PARENT
+                },
+                longClickDownloadButton = {
+                    findNavController().navigate(R.id.downloadBottomSheetDialog, bundleOf(
+                        Pair("downloadItem", it),
+                        Pair("result", downloadViewModel.createResultItemFromDownload(it)),
+                        Pair("type", it.type)
+                    )
+                    )
+                },
+                scheduleButtonClick = {}
             )
         }
     }
@@ -597,47 +498,6 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
 
         cancelActiveDownload(itemID)
     }
-    override fun onPauseClick(itemID: Long, action: ActiveDownloadAdapter.ActiveDownloadAction, position: Int) {
-        lifecycleScope.launch {
-            val item = withContext(Dispatchers.IO){
-                downloadViewModel.getItemByID(itemID)
-            }
-            when(action){
-                ActiveDownloadAdapter.ActiveDownloadAction.Pause -> {
-                    lifecycleScope.launch {
-                        cancelItem(itemID.toInt())
-                        item.status = DownloadRepository.Status.ActivePaused.toString()
-                        withContext(Dispatchers.IO){
-                            downloadViewModel.updateDownload(item)
-                        }
-                        activeAdapter.notifyItemChanged(position)
-                    }
-                }
-                ActiveDownloadAdapter.ActiveDownloadAction.Resume -> {
-                    lifecycleScope.launch {
-                        item.status = DownloadRepository.Status.Queued.toString()
-                        withContext(Dispatchers.IO){
-                            downloadViewModel.updateDownload(item)
-                        }
-                        activeAdapter.notifyItemChanged(position)
-
-                        val queue = if (activeCount > 1) listOf(item)
-                        else withContext(Dispatchers.IO){
-                            val list = downloadViewModel.getQueued().toMutableList()
-                            list.map { it.status = DownloadRepository.Status.Queued.toString() }
-                            list.add(0, item)
-                            list
-                        }
-
-                        runBlocking {
-                            downloadViewModel.queueDownloads(queue)
-                        }
-                    }
-                }
-            }
-
-        }
-    }
     override fun onCardClick() {
         this.dismiss()
         findNavController().navigate(
@@ -645,17 +505,10 @@ class ResultCardDetailsDialog : BottomSheetDialogFragment(), GenericDownloadAdap
         )
     }
 
-    private fun cancelItem(id: Int){
-        YoutubeDL.getInstance().destroyProcessById(id.toString())
-        WorkManager.getInstance(requireContext()).cancelAllWorkByTag(id.toString())
-        notificationUtil.cancelDownloadNotification(id)
-    }
-
     private fun cancelActiveDownload(itemID: Long){
         lifecycleScope.launch {
             val id = itemID.toInt()
             YoutubeDL.getInstance().destroyProcessById(id.toString())
-            WorkManager.getInstance(requireContext()).cancelAllWorkByTag(id.toString())
             notificationUtil.cancelDownloadNotification(id)
 
             withContext(Dispatchers.IO){

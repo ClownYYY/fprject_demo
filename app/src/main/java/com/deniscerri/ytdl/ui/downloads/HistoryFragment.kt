@@ -48,6 +48,8 @@ import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.database.viewmodel.HistoryViewModel
 import com.deniscerri.ytdl.ui.adapter.HistoryAdapter
 import com.deniscerri.ytdl.util.Extensions.enableFastScroll
+import com.deniscerri.ytdl.util.FileUtil
+import com.deniscerri.ytdl.util.NavbarUtil
 import com.deniscerri.ytdl.util.UiUtil
 import com.google.android.material.appbar.AppBarLayout
 import com.google.android.material.appbar.MaterialToolbar
@@ -115,6 +117,14 @@ class HistoryFragment : Fragment(), HistoryAdapter.OnItemClickListener{
         sortChip = view.findViewById(R.id.sortChip)
         selectedObjects = arrayListOf()
 
+        val isInNavBar = NavbarUtil.getNavBarItems(requireActivity()).any { n -> n.itemId == R.id.historyFragment && n.isVisible }
+        if (isInNavBar) {
+            topAppBar?.navigationIcon = null
+        }else{
+            mainActivity?.hideBottomNavigation()
+        }
+        topAppBar?.setNavigationOnClickListener { mainActivity?.onBackPressedDispatcher?.onBackPressed() }
+
 
         historyList = mutableListOf()
         allhistoryList = mutableListOf()
@@ -125,7 +135,6 @@ class HistoryFragment : Fragment(), HistoryAdapter.OnItemClickListener{
                 requireActivity()
             )
         recyclerView = view.findViewById(R.id.recyclerviewhistorys)
-        recyclerView.adapter = historyAdapter
         recyclerView.enableFastScroll()
 
         val preferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
@@ -155,7 +164,12 @@ class HistoryFragment : Fragment(), HistoryAdapter.OnItemClickListener{
         historyViewModel.getFilteredList().observe(viewLifecycleOwner) {
             historyAdapter!!.submitList(it)
             historyList = it
-            scrollToTop()
+
+            if (recyclerView.adapter == null){
+                recyclerView.adapter = historyAdapter
+            }else{
+                scrollToTop()
+            }
         }
 
         historyViewModel.sortOrder.observe(viewLifecycleOwner){
@@ -200,8 +214,8 @@ class HistoryFragment : Fragment(), HistoryAdapter.OnItemClickListener{
         initChips()
     }
 
-    private fun scrollToTop() {
-        recyclerView!!.scrollToPosition(0)
+    fun scrollToTop() {
+        recyclerView.scrollToPosition(0)
         Handler(Looper.getMainLooper()).post {
             (topAppBar!!.parent as AppBarLayout).setExpanded(
                 true,
@@ -239,6 +253,8 @@ class HistoryFragment : Fragment(), HistoryAdapter.OnItemClickListener{
             }
         })
         topAppBar!!.setOnClickListener { scrollToTop() }
+        val showingDownloadQueue = NavbarUtil.getNavBarItems(requireContext()).any { n -> n.itemId == R.id.downloadQueueMainFragment && n.isVisible }
+        topAppBar!!.menu.findItem(R.id.download_queue).isVisible = !showingDownloadQueue
         topAppBar!!.setOnMenuItemClickListener { m: MenuItem ->
             when (m.itemId) {
                 R.id.remove_history -> {
@@ -402,7 +418,7 @@ class HistoryFragment : Fragment(), HistoryAdapter.OnItemClickListener{
         val websites = mutableListOf<String>()
         val websiteFilter = historyViewModel.websiteFilter.value
         for (item in list){
-            if (!websites.contains(item.website.lowercase())) websites.add(item.website.lowercase())
+            if (!websites.contains(item.website)) websites.add(item.website)
         }
         websiteGroup!!.removeAllViews()
         if (websites.size <= 1) {
@@ -541,7 +557,7 @@ class HistoryFragment : Fragment(), HistoryAdapter.OnItemClickListener{
                     true
                 }
                 R.id.share -> {
-                    UiUtil.shareFileIntent(requireContext(), selectedObjects.map { it.downloadPath }.flatten())
+                    FileUtil.shareFileIntent(requireContext(), selectedObjects.map { it.downloadPath }.flatten())
                     clearCheckedItems()
                     actionMode?.finish()
                     true
@@ -666,7 +682,7 @@ class HistoryFragment : Fragment(), HistoryAdapter.OnItemClickListener{
 
     override fun onButtonClick(itemID: Long, isPresent: Boolean) {
         if (isPresent){
-            UiUtil.shareFileIntent(requireContext(), historyList!!.first { it!!.id == itemID }!!.downloadPath)
+            FileUtil.shareFileIntent(requireContext(), historyList!!.first { it!!.id == itemID }!!.downloadPath)
         }
     }
     companion object {

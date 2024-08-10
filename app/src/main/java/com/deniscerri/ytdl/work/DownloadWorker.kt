@@ -70,7 +70,7 @@ class DownloadWorker(
         if (currentWork.count{it.state == WorkInfo.State.RUNNING} > 1) return Result.success()
 
         // this is needed for observe sources call, so it wont create result items
-        val createResultItem = inputData.getBoolean("createResultItem", true)
+        //val createResultItem = inputData.getBoolean("createResultItem", true)
 
         val confTmp = Configuration(context.resources.configuration)
         val currLang = sharedPreferences.getString("app_language", "")!!.ifEmpty { Locale.getDefault().language }.split("-")
@@ -97,11 +97,15 @@ class DownloadWorker(
 
             val running = ArrayList(runningYTDLInstances)
             val useScheduler = sharedPreferences.getBoolean("use_scheduler", false)
-            if (items.isEmpty() && running.isEmpty()) WorkManager.getInstance(context).cancelWorkById(this@DownloadWorker.id)
+            if (items.isEmpty() && running.isEmpty()) {
+                WorkManager.getInstance(context).cancelWorkById(this@DownloadWorker.id)
+                return@collect
+            }
 
             if (useScheduler){
                 if (items.none{it.downloadStartTime > 0L} && running.isEmpty() && !alarmScheduler.isDuringTheScheduledTime()) {
                     WorkManager.getInstance(context).cancelWorkById(this@DownloadWorker.id)
+                    return@collect
                 }
             }
             val concurrentDownloads = sharedPreferences.getInt("concurrent_downloads", 1) - running.size
@@ -134,19 +138,20 @@ class DownloadWorker(
 
                     val downloadLocation = downloadItem.downloadPath
                     val keepCache = sharedPreferences.getBoolean("keep_cache", false)
-                    val logDownloads = sharedPreferences.getBoolean("log_downloads", false) && !sharedPreferences.getBoolean("incognito", false)
+                    val logDownloads = sharedPreferences.getBoolean("log_downloads", false) && !downloadItem.incognito
 
 
                     val commandString = infoUtil.parseYTDLRequestString(request)
-                    val logString = StringBuilder("\n ${commandString}\n\n")
+                    val initialLogDetails = "Downloading:\n" +
+                            "Title: ${downloadItem.title}\n" +
+                            "URL: ${downloadItem.url}\n" +
+                            "Type: ${downloadItem.type}\n" +
+                            "Command: \n $commandString \n\n"
+                    val logString = StringBuilder(initialLogDetails)
                     val logItem = LogItem(
                         0,
                         downloadItem.title.ifBlank { downloadItem.url },
-                        "Downloading:\n" +
-                                "Title: ${downloadItem.title}\n" +
-                                "URL: ${downloadItem.url}\n" +
-                                "Type: ${downloadItem.type}\n" +
-                                "Command: $logString",
+                        logString.toString(),
                         downloadItem.format,
                         downloadItem.type,
                         System.currentTimeMillis(),
@@ -162,6 +167,7 @@ class DownloadWorker(
                     val eventBus = EventBus.getDefault()
 
                     runCatching {
+                        YoutubeDL.getInstance().destroyProcessById(downloadItem.id.toString())
                         YoutubeDL.getInstance().execute(request, downloadItem.id.toString()){ progress, _, line ->
                             eventBus.post(WorkerProgress(progress.toInt(), line, downloadItem.id))
                             val title: String = downloadItem.title.ifEmpty { downloadItem.url }
@@ -178,8 +184,10 @@ class DownloadWorker(
                             }
                         }
                     }.onSuccess {
-                        resultRepo.updateDownloadItem(downloadItem)
-                        val wasQuickDownloaded = resultDao.getCountInt() == 0
+                        resultRepo.updateDownloadItem(downloadItem)?.apply {
+                            dao.updateWithoutUpsert(this)
+                        }
+                        //val wasQuickDownloaded = resultDao.getCountInt() == 0
                         runBlocking {
                             var finalPaths : MutableList<String>?
 
@@ -242,8 +250,7 @@ class DownloadWorker(
                             FileUtil.deleteConfigFiles(request)
 
                             //put download in history
-                            val incognito = sharedPreferences.getBoolean("incognito", false)
-                            if (!incognito) {
+                            if (!downloadItem.incognito) {
                                 if (request.hasOption("--download-archive") && finalPaths == listOf(context.getString(R.string.unfound_file))) {
                                     handler.postDelayed({
                                         Toast.makeText(context, resources.getString(R.string.download_already_exists), Toast.LENGTH_LONG).show()
@@ -264,7 +271,7 @@ class DownloadWorker(
 
                                         val historyItem = HistoryItem(0,
                                             downloadItem.url,
-                                            downloadItem.title.ifEmpty { downloadItem.playlistTitle },
+                                            downloadItem.title,
                                             downloadItem.author,
                                             downloadItem.duration,
                                             downloadItem.thumb,
@@ -302,7 +309,7 @@ class DownloadWorker(
                             dao.delete(downloadItem.id)
 
                             if (logDownloads){
-                                logRepo.update(it.out, logItem.id)
+                                logRepo.update(initialLogDetails + "\n" + it.out, logItem.id, true)
                             }
                         }
 

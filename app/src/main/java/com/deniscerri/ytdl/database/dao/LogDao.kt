@@ -36,6 +36,21 @@ interface LogDao {
         }
     }
 
+    @Query("UPDATE logs set content=:l where id=:id")
+    suspend fun updateLogContent(l: String, id: Long)
+
+    @Transaction
+    suspend fun updateLog(line: String, id: Long, resetLog: Boolean = false) {
+        val l = getByID(id) ?: return
+        var log = l.content ?: ""
+        if (resetLog) {
+            log = line.lines().joinToString("\n")
+        }else{
+            log += "\n${line}"
+        }
+        updateLogContent(log, id)
+    }
+
     @Update(onConflict = OnConflictStrategy.REPLACE)
     suspend fun update(item: LogItem)
 

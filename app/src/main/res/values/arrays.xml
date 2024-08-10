@@ -26,9 +26,9 @@
         <item>mp4</item>
         <item>webm</item>
         <item>mkv</item>
+        <item>mov</item>
         <item>avi</item>
         <item>flv</item>
-        <item>mov</item>
     </string-array>
 
     <string-array name="video_containers_values">
@@ -36,20 +36,20 @@
         <item>mp4</item>
         <item>webm</item>
         <item>mkv</item>
+        <item>mov</item>
         <item>avi</item>
         <item>flv</item>
-        <item>mov</item>
     </string-array>
 
     <string-array name="video_formats">
         <item>@string/best_quality</item>
-        <item>2160p</item>
-        <item>1440p</item>
-        <item>1080p</item>
-        <item>720p</item>
-        <item>480p</item>
-        <item>360p</item>
-        <item>240p</item>
+        <item>~2160p</item>
+        <item>~1440p</item>
+        <item>~1080p</item>
+        <item>~720p</item>
+        <item>~480p</item>
+        <item>~360p</item>
+        <item>~240p</item>
         <item>@string/worst_quality</item>
     </string-array>
 
@@ -66,13 +66,13 @@
     </string-array>
 
     <string-array name="audio_formats">
-        <item>best</item>
-        <item>192kbps</item>
-        <item>160kbps</item>
-        <item>128kbps</item>
-        <item>96kbps</item>
-        <item>64kbps</item>
-        <item>worst</item>
+        <item>@string/best_quality</item>
+        <item>~192kbps</item>
+        <item>~160kbps</item>
+        <item>~128kbps</item>
+        <item>~96kbps</item>
+        <item>~64kbps</item>
+        <item>@string/worst_quality</item>
     </string-array>
 
     <string-array name="audio_formats_values">
@@ -1461,6 +1461,32 @@
         <item>codec</item>
         <item>no_audio</item>
         <item>container</item>
+    </string-array>
+
+    <string-array name="label_visibility">
+        <item>@string/always</item>
+        <item>@string/selected</item>
+        <item>@string/never</item>
+    </string-array>
+
+    <string-array name="label_visibility_values">
+        <item>always</item>
+        <item>selected</item>
+        <item>never</item>
+    </string-array>
+
+    <string-array name="cleanup_leftover_downloads">
+        <item>@string/disabled</item>
+        <item>@string/daily</item>
+        <item>@string/weekly</item>
+        <item>@string/monthly</item>
+    </string-array>
+
+    <string-array name="cleanup_leftover_downloads_values">
+        <item></item>
+        <item>daily</item>
+        <item>weekly</item>
+        <item>monthly</item>
     </string-array>
 
 </resources>

@@ -1,16 +1,10 @@
 package com.deniscerri.ytdl.ui.downloads
 
-import android.content.ComponentName
-import android.content.Context
+import android.annotation.SuppressLint
 import android.content.DialogInterface
-import android.content.Intent
-import android.content.ServiceConnection
 import android.content.SharedPreferences
 import android.os.Bundle
-import android.os.IBinder
 import android.view.LayoutInflater
-import android.view.Menu
-import android.view.MenuInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
@@ -24,12 +18,12 @@ import androidx.preference.PreferenceManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.viewpager2.widget.ViewPager2
 import androidx.work.WorkManager
-import com.afollestad.materialdialogs.utils.MDUtil.inflate
 import com.deniscerri.ytdl.MainActivity
 import com.deniscerri.ytdl.R
 import com.deniscerri.ytdl.database.repository.DownloadRepository
 import com.deniscerri.ytdl.database.viewmodel.DownloadViewModel
 import com.deniscerri.ytdl.util.Extensions.createBadge
+import com.deniscerri.ytdl.util.NavbarUtil
 import com.deniscerri.ytdl.util.NotificationUtil
 import com.deniscerri.ytdl.util.UiUtil
 import com.google.android.material.appbar.MaterialToolbar
@@ -38,7 +32,6 @@ import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import com.yausername.youtubedl_android.YoutubeDL
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -52,6 +45,7 @@ class DownloadQueueMainFragment : Fragment(){
     private lateinit var viewPager2: ViewPager2
     private lateinit var fragmentAdapter : DownloadListFragmentAdapter
     private lateinit var mainActivity: MainActivity
+    private lateinit var notificationUtil: NotificationUtil
     private lateinit var sharedPreferences: SharedPreferences
 
     override fun onCreateView(
@@ -60,6 +54,7 @@ class DownloadQueueMainFragment : Fragment(){
         savedInstanceState: Bundle?
     ): View? {
         mainActivity = activity as MainActivity
+        notificationUtil = NotificationUtil(mainActivity)
         sharedPreferences = PreferenceManager.getDefaultSharedPreferences(requireContext())
         return inflater.inflate(R.layout.fragment_download_queue_main_screen, container, false)
     }
@@ -69,7 +64,13 @@ class DownloadQueueMainFragment : Fragment(){
         workManager = WorkManager.getInstance(requireContext())
         downloadViewModel = ViewModelProvider(requireActivity())[DownloadViewModel::class.java]
 
-        topAppBar = view.findViewById(R.id.logs_toolbar)
+        topAppBar = view.findViewById(R.id.downloads_toolbar)
+        val isInNavBar = NavbarUtil.getNavBarItems(requireActivity()).any { n -> n.itemId == R.id.downloadQueueMainFragment && n.isVisible }
+        if (isInNavBar) {
+            topAppBar.navigationIcon = null
+        }else{
+            mainActivity.hideBottomNavigation()
+        }
         topAppBar.setNavigationOnClickListener { mainActivity.onBackPressedDispatcher.onBackPressed() }
 
         tabLayout = view.findViewById(R.id.download_tablayout)
@@ -120,7 +121,6 @@ class DownloadQueueMainFragment : Fragment(){
                 initMenu()
             }
         })
-        mainActivity.hideBottomNavigation()
         initMenu()
 
         if (arguments?.getString("tab") != null){
@@ -129,6 +129,7 @@ class DownloadQueueMainFragment : Fragment(){
                 viewPager2.setCurrentItem(4, false)
                 val reconfigureID = arguments?.getLong("reconfigure")
                 reconfigureID?.apply {
+                    notificationUtil.cancelErroredNotification(this.toInt())
                     lifecycleScope.launch {
                         kotlin.runCatching {
                             val item = withContext(Dispatchers.IO){
@@ -264,7 +265,10 @@ class DownloadQueueMainFragment : Fragment(){
         deleteDialog.show()
     }
 
+    @SuppressLint("NotifyDataSetChanged")
     private fun cancelAllDownloads() {
+        sharedPreferences.edit().putBoolean("paused_downloads", false).apply()
+        fragmentAdapter.notifyDataSetChanged()
         workManager.cancelAllWorkByTag("download")
         lifecycleScope.launch {
             val notificationUtil = NotificationUtil(requireContext())
@@ -277,5 +281,10 @@ class DownloadQueueMainFragment : Fragment(){
             }
             downloadViewModel.cancelActiveQueued()
         }
+    }
+
+    fun scrollToActive(){
+        tabLayout.getTabAt(0)!!.select()
+        viewPager2.setCurrentItem(0, true)
     }
 }
